@@ -763,3 +763,23 @@ def summarize_all_spike_files(
     return big_df
 
 
+def assign_experiment(plate, rec_date):
+    # Convert rec_date to date if string
+    if isinstance(rec_date, str):
+        rec_date = datetime.strptime(rec_date, "%m.%d.%Y").date()
+
+    # Experiment 1: MAOA1–3
+    if plate in ["MAOA1", "MAOA2", "MAOA3"]:
+        return "Exp1"
+
+    # Experiment 2: MAOA72/76/77 before Sept 25
+    if plate in ["MAOA72", "MAOA76", "MAOA77"] and rec_date < date(2025,9,25):
+        return "Exp2"
+
+    # Experiment 3: MAOA72/76/77 on or after Sept 25
+    if plate in ["MAOA72", "MAOA76", "MAOA77"] and rec_date >= date(2025,9,25):
+        return "Exp3"
+
+    return "Unknown"
+
+
