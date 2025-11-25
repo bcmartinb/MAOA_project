@@ -189,3 +189,12 @@ def plot_feature_boxplots(df, feature, threshold_spikes_per_min=5):
             plt.legend(title="Cell line", bbox_to_anchor=(1.05, 1), loc="upper left")
             plt.tight_layout()
             plt.show()
+
+
+def assign_group3(line):
+    if line in mutant_lines:
+        return "Mutant"
+    elif line in wt_lines:
+        return "WT"
+    else:
+        return "GM"
