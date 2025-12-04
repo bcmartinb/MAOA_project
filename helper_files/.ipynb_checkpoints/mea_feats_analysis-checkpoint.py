@@ -22,17 +22,24 @@ def expand_electrodes(row):
     })
 
 
-def plot_plate_map(df, plate_name, use_group3=False, double_label=False):
+def plot_plate_map(df, plate_name, use_group=False, double_label=False):
     """
     Draw a 3×4 plate map.
 
-    Modes:
-      - Default:     cell_line only  (original behavior)
-      - use_group3:  shows group3 ONLY (Mutant / WT / GM)
-      - double_label: shows both group3 and cell_line
+    Parameters
+    ----------
+    df : DataFrame
+    plate_name : str
+    use_group : bool
+        If True → wells are colored by group (Mutant / WT / GM)
+    double_label : bool
+        If True → show both group AND cell_line inside each well
 
-    Priority:
-      double_label=True overrides use_group3.
+    Behavior
+    --------
+    - Default:     color by cell_line, label cell_line only
+    - use_group:   color by group, label group only
+    - double_label: color by group, label group + (cell_line)
     """
 
     sub = df[df["plate_name"] == plate_name].copy()
@@ -43,7 +50,7 @@ def plot_plate_map(df, plate_name, use_group3=False, double_label=False):
     # one row per well
     sub = sub.drop_duplicates(subset=["well"]).copy()
 
-    # parse row/col
+    # parse coordinates
     sub["row"] = sub["well"].str[0]
     sub["col"] = sub["well"].str[1:].astype(int)
 
@@ -52,98 +59,116 @@ def plot_plate_map(df, plate_name, use_group3=False, double_label=False):
 
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    # ------------------------------
-    # COLOR MAP LOGIC
-    # ------------------------------
-    if double_label or use_group3:
-        # group colors
+    # =======================================================
+    # COLORING RULES — NOW USING ONLY "group"
+    # =======================================================
+    if use_group or double_label:
+
+        if "group" not in sub.columns:
+            raise ValueError(
+                "Column 'group' is missing. Did you run assign_group()?"
+            )
+
+        # fixed colors for 3 biological groups
         color_map = {
             "Mutant": "#FF9999",
             "WT":     "#99CCFF",
-            "GM":     "#CCFFCC"
+            "GM":     "#CCFFCC",
         }
-        group_values = sub["group3"].unique()
-        for g in group_values:
+
+        # ensure unknown groups get a color
+        for g in sub["group"].unique():
             if g not in color_map:
-                color_map[g] = "#DDDDDD"  # fallback
+                color_map[g] = "#DDDDDD"
+
     else:
-        # original cell line colors
+        # default behavior: color wells by cell line
         cell_lines = sorted(sub["cell_line"].unique())
         color_map = {cl: plt.cm.Set3(i / len(cell_lines))
                      for i, cl in enumerate(cell_lines)}
 
-    # ------------------------------
+    # =======================================================
     # DRAW WELLS
-    # ------------------------------
+    # =======================================================
     for _, r in sub.iterrows():
         x = r["col"] - 1
         y = r["row_index"]
 
-        # choose fill color
-        fill_key = r["group3"] if (use_group3 or double_label) else r["cell_line"]
+        # determine color
+        if use_group or double_label:
+            fill_key = r["group"]
+        else:
+            fill_key = r["cell_line"]
+
         rect = patches.Rectangle(
-            (x, y), 1, 1,
+            (x, y),
+            1, 1,
             linewidth=1,
-            edgecolor="black",
+            edgecolor='black',
             facecolor=color_map[fill_key]
         )
         ax.add_patch(rect)
 
-        # TEXT LABELS
+        # =======================================================
+        # LABEL RULES
+        # =======================================================
         if double_label:
-            # Top: group3
+            # group on top
             ax.text(
-                x + 0.5, y + 0.40,
-                r["group3"],
-                ha="center", va="center",
-                fontsize=12, fontweight="bold"
+                x + 0.5, y + 0.35,
+                r["group"],
+                ha='center', va='center',
+                fontsize=12, fontweight='bold'
             )
-            # Bottom: cell line
+            # cell line under it
             ax.text(
-                x + 0.5, y + 0.70,
+                x + 0.5, y + 0.65,
                 f"({r['cell_line']})",
-                ha="center", va="center",
+                ha='center', va='center',
                 fontsize=10
             )
 
-        elif use_group3:
+        elif use_group:
             ax.text(
                 x + 0.5, y + 0.5,
-                r["group3"],
-                ha="center", va="center",
-                fontsize=12, fontweight="bold"
+                r["group"],
+                ha='center', va='center',
+                fontsize=12, fontweight='bold'
             )
 
         else:
             ax.text(
                 x + 0.5, y + 0.5,
                 r["cell_line"],
-                ha="center", va="center",
+                ha='center', va='center',
                 fontsize=12
             )
 
-    # Formatting
+    # =======================================================
+    # AXIS FORMATTING
+    # =======================================================
     ax.set_xlim(0, 4)
     ax.set_ylim(0, 3)
+
     ax.set_xticks([0.5, 1.5, 2.5, 3.5])
     ax.set_xticklabels([1, 2, 3, 4])
+
     ax.set_yticks([0.5, 1.5, 2.5])
     ax.set_yticklabels(row_order)
 
-    # Title
     if double_label:
         title = "Group + Cell Line Layout"
-    elif use_group3:
+    elif use_group:
         title = "Group Layout"
     else:
         title = "Cell Line Layout"
 
     ax.set_title(f"{plate_name} — {title}")
     ax.invert_yaxis()
-    ax.set_aspect("equal")
+    ax.set_aspect('equal')
+
     plt.tight_layout()
     plt.show()
-
 
 
 def plot_feature_boxplots(df, feature, threshold_spikes_per_min=5, group_col="cell_line"):
@@ -243,20 +268,17 @@ def plot_feature_boxplots(df, feature, threshold_spikes_per_min=5, group_col="ce
 
 def run_feature_stats(df, feature, threshold_spikes_per_min=5, group_col="cell_line"):
     """
-    Runs TWO-WAY ANOVA (group_col × date_label) and ONE-WAY ANOVA,
-    plus Bonferroni-corrected posthocs.
-    Works for well-level and electrode-level (firing + burst).
+    Runs ANOVAs and posthoc t-tests for ONE selected experiment.
+    df should already be filtered to a single experiment.
+
+    group_col = "cell_line" OR "group"
     """
 
     df = df.copy()
     feature = feature.lower()
     threshold_hz = threshold_spikes_per_min / 60.0
 
-    valid = ["firing", "burst", "network", "synchrony"]
-    if feature not in valid:
-        raise ValueError(f"feature must be: {valid}")
-
-    # WELL LEVEL VALUES
+    # --- extract well-level values ---
     if feature == "firing":
         df["well_value"] = df["firing_rate_stats_hz"].str[0]
     elif feature == "burst":
@@ -268,128 +290,88 @@ def run_feature_stats(df, feature, threshold_spikes_per_min=5, group_col="cell_l
 
     df["date_label"] = df["recording_date"].astype(str)
 
-    results = {}
+    # -------------------
+    # ANALYZE THIS EXPERIMENT ONLY
+    # -------------------
+    sub = df.dropna(subset=["well_value", group_col]).copy()
+    exp_result = {"well": {}, "electrode": {}}
 
-    for exp in sorted(df["experiment"].unique()):
-        sub = df[df["experiment"] == exp].dropna(subset=["well_value", group_col]).copy()
-        exp_result = {"well": {}, "electrode": {}}
+    # ---------------- WELL: two-way ANOVA ----------------
+    if len(sub[group_col].unique()) > 1 and len(sub["date_label"].unique()) > 1:
+        model = smf.ols(f"well_value ~ C({group_col}) * C(date_label)", data=sub).fit()
+        exp_result["well"]["two_way_anova"] = _clean_anova_table(anova_lm(model, typ=2))
+    else:
+        exp_result["well"]["two_way_anova"] = None
 
-        # -------- WELL-LEVEL TWO-WAY ANOVA ----------
-        if len(sub[group_col].unique()) > 1 and len(sub["date_label"].unique()) > 1:
-            model = smf.ols(f"well_value ~ C({group_col}) * C(date_label)", data=sub).fit()
-            anova_tw = anova_lm(model, typ=2)
-            exp_result["well"]["two_way_anova"] = _clean_anova_table(anova_tw)
-        else:
-            exp_result["well"]["two_way_anova"] = None
+    # ---------------- WELL: one-way ANOVA ----------------
+    if len(sub[group_col].unique()) > 1:
+        model = smf.ols(f"well_value ~ C({group_col})", data=sub).fit()
+        exp_result["well"]["one_way_anova"] = _clean_anova_table(anova_lm(model, typ=2))
+    else:
+        exp_result["well"]["one_way_anova"] = None
 
-        # -------- WELL-LEVEL ONE-WAY ANOVA ----------
-        if len(sub[group_col].unique()) > 1:
-            model = smf.ols(f"well_value ~ C({group_col})", data=sub).fit()
-            anova_ow = anova_lm(model, typ=2)
-            exp_result["well"]["one_way_anova"] = _clean_anova_table(anova_ow)
-        else:
-            exp_result["well"]["one_way_anova"] = None
+    # ---------------- WELL: posthoc t-tests ----------------
+    from itertools import combinations
+    groups = sorted(sub[group_col].unique())
+    pairs = list(combinations(groups, 2))
+    m = len(pairs)
+    posthoc_rows = []
 
-        # -------- WELL-LEVEL POSTHOC ----------
-        posthoc_list = []
-        groups = sorted(sub[group_col].unique())
-        from itertools import combinations
-        pairs = list(combinations(groups, 2))
-        m = len(pairs)
+    for a, b in pairs:
+        xa = sub.loc[sub[group_col] == a, "well_value"].dropna()
+        xb = sub.loc[sub[group_col] == b, "well_value"].dropna()
+        if len(xa) < 2 or len(xb) < 2:
+            continue
+        t, p = ttest_ind(xa, xb, equal_var=False)
+        bonf = min(p * m, 1.0)
+        posthoc_rows.append({
+            "group1": a,
+            "group2": b,
+            "mean1": float(xa.mean()),
+            "mean2": float(xb.mean()),
+            "difference": float(xa.mean() - xb.mean()),
+            "t": float(t),
+            "p_raw": float(p),
+            "p_fmt": _format_p(p),
+            "p_bonf": float(bonf),
+            "p_bonf_fmt": _format_p(bonf)
+        })
 
-        for a, b in pairs:
-            xa = sub[sub[group_col] == a]["well_value"].dropna()
-            xb = sub[sub[group_col] == b]["well_value"].dropna()
-            if len(xa) < 2 or len(xb) < 2:
-                continue
-            t, p = ttest_ind(xa, xb, equal_var=False)
-            p_adj = min(p * m, 1.0)
-            posthoc_list.append({
-                "group1": a,
-                "group2": b,
-                "mean1": float(xa.mean()),
-                "mean2": float(xb.mean()),
-                "difference": float(xa.mean() - xb.mean()),
-                "t_stat": float(t),
-                "p_raw": float(p),
-                "p_raw_fmt": _format_p(p),
-                "p_bonf": float(p_adj),
-                "p_bonf_fmt": _format_p(p_adj)
-            })
+    exp_result["well"]["posthoc"] = pd.DataFrame(posthoc_rows) if posthoc_rows else None
 
-        exp_result["well"]["posthoc"] = pd.DataFrame(posthoc_list) if posthoc_list else None
+    # ---------------- ELECTRODE LEVEL ----------------
+    if feature in ["firing", "burst"]:
+        key = "firing_rate_vector_hz" if feature == "firing" else "burst_rate_vector_hz"
 
-        # ======================================================
-        # ELECTRODE LEVEL — only firing + burst
-        # ======================================================
-        if feature in ["firing", "burst"]:
-
-            key = "firing_rate_vector_hz" if feature == "firing" else "burst_rate_vector_hz"
-
-            def expand(row):
-                return pd.DataFrame({
+        expanded = []
+        for _, row in sub.iterrows():
+            for v in row[key]:
+                expanded.append({
                     group_col: row[group_col],
-                    "date_label": str(row["recording_date"]),
-                    "value": row[key]
+                    "date_label": row["date_label"],
+                    "value": v
                 })
 
-            elec_df = pd.concat([expand(r) for _, r in sub.iterrows()], ignore_index=True)
-            elec_df = elec_df.dropna(subset=["value"])
+        elec_df = pd.DataFrame(expanded).dropna(subset=["value"])
 
-            if feature == "firing":
-                elec_df = elec_df[elec_df["value"] >= threshold_hz]
+        if feature == "firing":
+            elec_df = elec_df[elec_df["value"] >= threshold_hz]
 
-            if elec_df.empty or len(elec_df[group_col].unique()) < 2:
-                exp_result["electrode"] = {
-                    "two_way_anova": None,
-                    "one_way_anova": None,
-                    "posthoc": None
-                }
-            else:
-                # 2-way ANOVA
-                if len(elec_df["date_label"].unique()) > 1:
-                    model = smf.ols(f"value ~ C({group_col}) * C(date_label)", data=elec_df).fit()
-                    anova_tw = anova_lm(model, typ=2)
-                    exp_result["electrode"]["two_way_anova"] = _clean_anova_table(anova_tw)
-                else:
-                    exp_result["electrode"]["two_way_anova"] = None
+        # 2-way ANOVA electrode
+        if len(elec_df[group_col].unique()) > 1 and len(elec_df["date_label"].unique()) > 1:
+            model = smf.ols(f"value ~ C({group_col}) * C(date_label)", data=elec_df).fit()
+            exp_result["electrode"]["two_way_anova"] = _clean_anova_table(anova_lm(model, typ=2))
+        else:
+            exp_result["electrode"]["two_way_anova"] = None
 
-                # 1-way ANOVA
-                model = smf.ols(f"value ~ C({group_col})", data=elec_df).fit()
-                anova_ow = anova_lm(model, typ=2)
-                exp_result["electrode"]["one_way_anova"] = _clean_anova_table(anova_ow)
+        # 1-way ANOVA electrode
+        if len(elec_df[group_col].unique()) > 1:
+            model = smf.ols(f"value ~ C({group_col})", data=elec_df).fit()
+            exp_result["electrode"]["one_way_anova"] = _clean_anova_table(anova_lm(model, typ=2))
+        else:
+            exp_result["electrode"]["one_way_anova"] = None
 
-                # posthoc
-                post_list = []
-                groups_e = sorted(elec_df[group_col].unique())
-                pairs_e = list(combinations(groups_e, 2))
-                m_e = len(pairs_e)
-
-                for a, b in pairs_e:
-                    xa = elec_df[elec_df[group_col] == a]["value"]
-                    xb = elec_df[elec_df[group_col] == b]["value"]
-                    if len(xa) < 2 or len(xb) < 2:
-                        continue
-                    t, p = ttest_ind(xa, xb, equal_var=False)
-                    p_adj = min(p * m_e, 1.0)
-                    post_list.append({
-                        "group1": a,
-                        "group2": b,
-                        "mean1": float(xa.mean()),
-                        "mean2": float(xb.mean()),
-                        "difference": float(xa.mean() - xb.mean()),
-                        "t_stat": float(t),
-                        "p_raw": float(p),
-                        "p_raw_fmt": _format_p(p),
-                        "p_bonf": float(p_adj),
-                        "p_bonf_fmt": _format_p(p_adj)
-                    })
-
-                exp_result["electrode"]["posthoc"] = pd.DataFrame(post_list)
-
-        results[exp] = exp_result
-
-    return results
+    return exp_result
 
 
 def _format_p(p, ndigits=6):
@@ -414,7 +396,7 @@ def _clean_anova_table(anova):
 
 
 
-def assign_group3(line):
+def assign_group(line):
     mutant_lines = {"C3", "C71", "C90"}
     wt_lines = {"C12", "C30", "C54"}
     if line in mutant_lines:
@@ -425,4 +407,144 @@ def assign_group3(line):
         return "GM"
 
 
+# --------------------------------------------------------------
+# MASTER FUNCTION FOR FULL MEA ANALYSIS
+# --------------------------------------------------------------
+def run_full_mea_analysis(
+    df,
+    experiment,
+    assign_groups=True,
+    use_group_for_plate_map=False,
+    double_label=False,
+    threshold_spikes_per_min=5
+):
+    """
+    Full MEA analysis pipeline:
+      • filters dataframe by experiment
+      • assigns Mutant / WT / GM group (if requested)
+      • draws plate maps
+      • creates boxplots for cell lines
+      • creates boxplots for groups (Mutant / WT / GM)
+      • runs stats for cell lines + prints posthoc
+      • runs stats for groups + prints posthoc
+      • returns full stats dictionary
+    """
+
+    # ---------------- FILTER BY EXPERIMENT ----------------
+    df_exp = df[df["experiment"] == experiment].copy()
+    if df_exp.empty:
+        raise ValueError(
+            f"No rows found for experiment '{experiment}'. "
+            f"Available experiments: {df['experiment'].unique()}"
+        )
+
+    print(f"\n### RUNNING ANALYSIS FOR {experiment} ###")
+    print("Plates included:", df_exp["plate_name"].unique())
+
+    # ---------------- ASSIGN GROUPS ----------------
+    if assign_groups:
+        df_exp["group"] = df_exp["cell_line"].apply(assign_group)
+
+    # ---------------- PLOT PLATE MAPS ----------------
+    print("\n### DRAWING PLATE MAPS ###")
+    for plate in df_exp["plate_name"].unique():
+        print(f" → Plotting {plate}")
+        plot_plate_map(
+            df_exp,
+            plate_name=plate,
+            use_group=use_group_for_plate_map,
+            double_label=double_label
+        )
+
+    # ---------------- FEATURES ----------------
+    features = ["firing", "burst", "network", "synchrony"]
+
+    # -----------------------------------------------------------
+    # 1) CELL-LINE PLOTS
+    # -----------------------------------------------------------
+    print("\n### GENERATING FEATURE PLOTS — CELL LINES ###")
+    for feat in features:
+        print(f" → Plotting {feat} (cell lines)")
+        plot_feature_boxplots(
+            df_exp,
+            feature=feat,
+            threshold_spikes_per_min=threshold_spikes_per_min,
+            group_col="cell_line"   # explicit for clarity
+        )
+
+    # -----------------------------------------------------------
+    # 2) GROUP PLOTS (Mutant / WT / GM)
+    # -----------------------------------------------------------
+    print("\n### GENERATING FEATURE PLOTS — GROUPS ###")
+
+    df_group = df_exp.copy()  # KEEP both group and cell_line intact
+
+    for feat in features:
+        print(f" → Plotting {feat} (groups)")
+        plot_feature_boxplots(
+            df_group,
+            feature=feat,
+            threshold_spikes_per_min=threshold_spikes_per_min,
+            group_col="group"     # key fix
+        )
+
+    # -----------------------------------------------------------
+    # 3) STATS — CELL LINE
+    # -----------------------------------------------------------
+    print("\n### RUNNING STATISTICS — CELL LINES ###")
+    stats_cell = {}
+
+    for feat in features:
+        print(f"\n===== CELL LINE STATS: {feat.upper()} =====")
+        res = run_feature_stats(
+            df_exp,
+            feature=feat,
+            threshold_spikes_per_min=threshold_spikes_per_min,
+            group_col="cell_line"
+        )
+        stats_cell[feat] = res
+
+        # ---- PRINT POSTHOC TABLES ----
+        if res["well"]["posthoc"] is not None:
+            print("\n  WELL-LEVEL POST-HOC t-tests:")
+            print(res["well"]["posthoc"])
+
+        if res.get("electrode", {}).get("posthoc") is not None:
+            print("\n  ELECTRODE-LEVEL POST-HOC t-tests:")
+            print(res["electrode"]["posthoc"])
+
+    # -----------------------------------------------------------
+    # 4) STATS — GROUP LEVEL
+    # -----------------------------------------------------------
+    print("\n### RUNNING STATISTICS — GROUPS (Mutant / WT / GM) ###")
+    stats_group = {}
+
+    df_group_stats = df_exp.copy()
+
+    for feat in features:
+        print(f"\n===== GROUP STATS: {feat.upper()} =====")
+        res_g = run_feature_stats(
+            df_group_stats,
+            feature=feat,
+            threshold_spikes_per_min=threshold_spikes_per_min,
+            group_col="group"
+        )
+        stats_group[feat] = res_g
+
+        # ---- PRINT POSTHOC TABLES ----
+        if res_g["well"]["posthoc"] is not None:
+            print("\n  WELL-LEVEL POST-HOC t-tests (groups):")
+            print(res_g["well"]["posthoc"])
+
+        if res_g.get("electrode", {}).get("posthoc") is not None:
+            print("\n  ELECTRODE-LEVEL POST-HOC t-tests (groups):")
+            print(res_g["electrode"]["posthoc"])
+
+    print("\n### ANALYSIS COMPLETE ###")
+
+    return {
+        "experiment": experiment,
+        "stats_cell_line": stats_cell,
+        "stats_group": stats_group,
+    }
 
