@@ -548,3 +548,30 @@ def run_full_mea_analysis(
         "stats_group": stats_group,
     }
 
+def remove_clones_by_plate(df, removals):
+    """
+    Removes unwanted clones based ONLY on plate_name.
+    Applies the same removal rules across all experiments and dates.
+    """
+
+
+    df_clean = df.copy()
+    mask_remove = []
+
+    for idx, row in df_clean.iterrows():
+        plate = row["plate_name"]
+        clone = row["cell_line"]
+
+        # If plate has removal rules
+        if plate in removals:
+            if clone in removals[plate]:
+                mask_remove.append(True)
+                continue
+
+        mask_remove.append(False)
+
+    mask_remove = pd.Series(mask_remove, index=df_clean.index)
+
+    print(f"Removed {mask_remove.sum()} rows based on plate-specific clone removal.")
+
+    return df_clean[~mask_remove].reset_index(drop=True)
