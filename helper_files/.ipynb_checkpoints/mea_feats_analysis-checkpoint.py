@@ -399,10 +399,13 @@ def _clean_anova_table(anova):
 def assign_group(line):
     mutant_lines = {"C3", "C71", "C90"}
     wt_lines = {"C12", "C30", "C54"}
+    other_control = {"H9"}
     if line in mutant_lines:
         return "Mutant"
     elif line in wt_lines:
         return "WT"
+    elif line in other_control:
+        return "other"
     else:
         return "GM"
 
