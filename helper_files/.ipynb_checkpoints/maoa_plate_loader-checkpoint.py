@@ -72,7 +72,7 @@ PLATE_METADATA: dict[str, dict] = {
     "MAOA72": {
         "origin_date": date(2025, 2, 13),
         "wells_to_cell_line": {
-            "A1": "C90", "A2": "C90", "A3": "C90", "A4": "C90",
+            "A1": "C90m", "A2": "C90m", "A3": "C90m", "A4": "C90m",
             "B1": "C12c", "B2": "C12c", "B3": "C12c", "B4": "C12c",
             "C1": "GM",  "C2": "GM",  "C3": "GM",  "C4": "GM",
         },
@@ -81,7 +81,7 @@ PLATE_METADATA: dict[str, dict] = {
     "MAOA76": {
         "origin_date": date(2025, 2, 13),
         "wells_to_cell_line": {
-            "A1": "C90", "A2": "C90", "A3": "C90", "A4": "C90",
+            "A1": "C90m", "A2": "C90m", "A3": "C90m", "A4": "C90m",
             "B1": "C12c", "B2": "C12c", "B3": "C12c", "B4": "C12c",
             "C1": "GM",  "C2": "GM",  "C3": "GM",  "C4": "GM",
         },
@@ -90,7 +90,7 @@ PLATE_METADATA: dict[str, dict] = {
     "MAOA77": {
         "origin_date": date(2025, 2, 13),
         "wells_to_cell_line": {
-            "A1": "C90", "A2": "C90", "A3": "C90", "A4": "C90",
+            "A1": "C90m", "A2": "C90m", "A3": "C90m", "A4": "C90m",
             "B1": "C12c", "B2": "C12c", "B3": "C12c", "B4": "C12c",
             "C1": "GM",  "C2": "GM",  "C3": "GM",  "C4": "GM",
         },
