@@ -73,7 +73,7 @@ PLATE_METADATA: dict[str, dict] = {
         "origin_date": date(2025, 2, 13),
         "wells_to_cell_line": {
             "A1": "C90", "A2": "C90", "A3": "C90", "A4": "C90",
-            "B1": "C12", "B2": "C12", "B3": "C12", "B4": "C12",
+            "B1": "C12c", "B2": "C12c", "B3": "C12c", "B4": "C12c",
             "C1": "GM",  "C2": "GM",  "C3": "GM",  "C4": "GM",
         },
     },
@@ -82,7 +82,7 @@ PLATE_METADATA: dict[str, dict] = {
         "origin_date": date(2025, 2, 13),
         "wells_to_cell_line": {
             "A1": "C90", "A2": "C90", "A3": "C90", "A4": "C90",
-            "B1": "C12", "B2": "C12", "B3": "C12", "B4": "C12",
+            "B1": "C12c", "B2": "C12c", "B3": "C12c", "B4": "C12c",
             "C1": "GM",  "C2": "GM",  "C3": "GM",  "C4": "GM",
         },
     },
@@ -91,7 +91,7 @@ PLATE_METADATA: dict[str, dict] = {
         "origin_date": date(2025, 2, 13),
         "wells_to_cell_line": {
             "A1": "C90", "A2": "C90", "A3": "C90", "A4": "C90",
-            "B1": "C12", "B2": "C12", "B3": "C12", "B4": "C12",
+            "B1": "C12c", "B2": "C12c", "B3": "C12c", "B4": "C12c",
             "C1": "GM",  "C2": "GM",  "C3": "GM",  "C4": "GM",
         },
     },

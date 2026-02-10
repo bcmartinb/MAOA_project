@@ -72,7 +72,7 @@ def plot_plate_map(df, plate_name, use_group=False, double_label=False):
         # fixed colors for 3 biological groups
         color_map = {
             "Mutant": "#FF9999",
-            "WT":     "#99CCFF",
+            "Ctrl":     "#99CCFF",
             "GM":     "#CCFFCC",
         }
 
@@ -398,13 +398,13 @@ def _clean_anova_table(anova):
 
 def assign_group(line):
     mutant_lines = {"C3", "C71"}
-    wt_lines = { "C30"}
-    other_control = {"H9", "C90", "C12","C54"}
+    ctrl_lines = { "C30", "C12c"}
+    other = {"H9", "C90", "C12","C54"}
     if line in mutant_lines:
         return "Mutant"
-    elif line in wt_lines:
-        return "WT"
-    elif line in other_control:
+    elif line in ctrl_lines:
+        return "Ctrl"
+    elif line in other:
         return "other"
     else:
         return "GM"
