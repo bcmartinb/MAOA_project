@@ -397,9 +397,9 @@ def _clean_anova_table(anova):
 
 
 def assign_group(line):
-    mutant_lines = {"C3", "C71", "C90m"}
+    mutant_lines = {"C90", "C90m"}
     ctrl_lines = { "C30", "C12c"}
-    other = {"H9", "C90", "C12","C54"}
+    other = {"H9", "C90", "C12","C54", "C3", "C71"}
     if line in mutant_lines:
         return "Mutant"
     elif line in ctrl_lines:
