@@ -714,13 +714,15 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
                 sns.regplot(data=sub, x="x_idx", y=y_col, scatter=False, color=palette[g], 
                             truncate=True, line_kws={"ls":"--", "lw":2.5})
 
-        plt.ylabel(f"{level_name} {ylabel_base} (Hz)", fontsize=12)
-        plt.xlabel(xlabel, fontsize=12)
+        plt.ylabel(f"{level_name} {ylabel_base} (Hz)", fontsize=18)
+        plt.yticks(fontsize=16)
+        plt.xticks(fontsize=16)
+        plt.xlabel(xlabel, fontsize=18)
         plt.text(0.97, 0.95, f"{traj_summary}\n{posthoc_text}".strip(), transform=ax.transAxes, 
-                 fontsize=9, fontweight='bold', ha='right', va='top', 
+                 fontsize=14, fontweight='bold', ha='right', va='top', 
                  bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray'))
         
-        plt.legend(title="Genotype", bbox_to_anchor=(1.05, 0.7), loc='upper left', frameon=False)
+        plt.legend(title="Genotype", bbox_to_anchor=(1.05, 0.7), loc='upper left', frameon=False, fontsize=16)
         sns.despine(); plt.tight_layout(); plt.show()
 
     # Draw Well-Level
@@ -777,9 +779,11 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
             curr_y -= 0.14 
 
         plt.title(f"Grouped {level_name} {feat_label}", fontsize=FONT_SIZE + 2, fontweight='bold')
-        plt.ylabel(f"{level_name} {feat_label} (Hz)" if "Index" not in feat_label else f"{level_name} {feat_label}", fontsize=FONT_SIZE + 2)
-        plt.xlabel("Genotype", fontsize=FONT_SIZE)
-        ax.tick_params(axis='both', labelsize=FONT_SIZE)
+        plt.ylabel(f"{level_name} {feat_label} (Hz)" if "Index" not in feat_label else f"{level_name} {feat_label}", fontsize=FONT_SIZE + 6)
+        plt.xlabel("Genotype", fontsize=FONT_SIZE + 6)
+        ax.tick_params(axis='both', labelsize=FONT_SIZE + 6)
+        plt.yticks(fontsize=16)
+        plt.xticks(fontsize=16)
         sns.despine()
         plt.subplots_adjust(right=0.55); plt.show()
 
