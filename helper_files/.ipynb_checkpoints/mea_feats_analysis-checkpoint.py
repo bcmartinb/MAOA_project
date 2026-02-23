@@ -739,24 +739,30 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             if feature == "firing": elec_df = elec_df[elec_df["v"] >= threshold_hz]
             draw_trajectory_panel(elec_df, "v", "Electrode-Level")
 
-
+#GROUPED 
 def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes_per_min=5):
     df = df.copy()
     threshold_hz = threshold_spikes_per_min / 60.0
     FONT_SIZE = 12
 
-    def draw_grouped_panel(data, y_col, level_name):
+    def draw_grouped_panel(data, y_col, level_name, feat_label):
         data = data.dropna(subset=[y_col])
+        if data.empty: return
+        
         try:
             model = smf.ols(f"{y_col} ~ C(group)", data=data).fit()
             p_anova = anova_lm(model, typ=2).loc["C(group)", "PR(>F)"]
             anova_summary = f"ANOVA: {get_stars(p_anova)}"
             comp = mc.MultiComparison(data[y_col], data["group"])
             ph_df = pd.DataFrame(data=comp.tukeyhsd().summary().data[1:], columns=comp.tukeyhsd().summary().data[0])
-            posthoc_data = [{"g1": r['group1'], "g2": r['group2'], "star": get_stars(r['p-adj']), "d": calculate_cohens_d(data[data["group"]==r['group1']][y_col], data[data["group"]==r['group2']][y_col])} for _, r in ph_df.iterrows()]
-        except: anova_summary, posthoc_data = "ANOVA Error", []
+            posthoc_data = [{"g1": r['group1'], "g2": r['group2'], "star": get_stars(r['p-adj']), 
+                             "d": calculate_cohens_d(data[data["group"]==r['group1']][y_col], 
+                                                     data[data["group"]==r['group2']][y_col])} for _, r in ph_df.iterrows()]
+        except: 
+            anova_summary, posthoc_data = "ANOVA Error", []
 
         plt.figure(figsize=(14, 8))
+        sns.set_style("ticks")
         ax = sns.boxplot(data=data, x="group", y=y_col, order=order, palette=palette, showfliers=False, width=0.5, boxprops=dict(alpha=0.8, edgecolor='black'))
         sns.stripplot(data=data, x="group", y=y_col, order=order, palette=palette, alpha=0.25, jitter=0.2, size=5, legend=False)
 
@@ -770,20 +776,36 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
             ax.text(res_x, curr_y - 0.05, f"({res['star']}, Cohen's d: {res['d']:.2f})", transform=ax.transAxes, fontsize=FONT_SIZE, va='top')
             curr_y -= 0.14 
 
-        plt.ylabel(f"{level_name} {feature.capitalize()} Rate (Hz)", fontsize=FONT_SIZE + 2)
+        plt.title(f"Grouped {level_name} {feat_label}", fontsize=FONT_SIZE + 2, fontweight='bold')
+        plt.ylabel(f"{level_name} {feat_label} (Hz)" if "Index" not in feat_label else f"{level_name} {feat_label}", fontsize=FONT_SIZE + 2)
         plt.xlabel("Genotype", fontsize=FONT_SIZE)
+        ax.tick_params(axis='both', labelsize=FONT_SIZE)
+        sns.despine()
         plt.subplots_adjust(right=0.55); plt.show()
 
-    # Call for Well and Electrode levels
+    # Feature Logic
     if feature == "firing":
         df["well_val"] = df["firing_rate_stats_hz"].str[0]
-        draw_grouped_panel(df, "well_val", "Well-Level")
-        
-        # Electrode expansion...
+        draw_grouped_panel(df, "well_val", "Well-Level", "Firing Rate")
         expanded = [{"group": r["group"], "v": v} for _, r in df.iterrows() for v in r["firing_rate_vector_hz"]]
         e_df = pd.DataFrame(expanded).dropna()
         e_df = e_df[e_df["v"] >= threshold_hz]
-        draw_grouped_panel(e_df, "v", "Electrode-Level")
+        draw_grouped_panel(e_df, "v", "Electrode-Level", "Firing Rate")
+        
+    elif feature == "burst":
+        df["well_val"] = df["burst_rate_stats_hz"].str[0]
+        draw_grouped_panel(df, "well_val", "Well-Level", "Burst Rate")
+        expanded = [{"group": r["group"], "v": v} for _, r in df.iterrows() for v in r["burst_rate_vector_hz"]]
+        e_df = pd.DataFrame(expanded).dropna()
+        draw_grouped_panel(e_df, "v", "Electrode-Level", "Burst Rate")
+        
+    elif feature == "network":
+        df["well_val"] = df["network_event_rate_hz"]
+        draw_grouped_panel(df, "well_val", "Well-Level", "Network Rate")
+        
+    elif feature == "synchrony":
+        df["well_val"] = df["synchrony_index"]
+        draw_grouped_panel(df, "well_val", "Well-Level", "Synchrony Index")
 
 
 def run_mea_analysis_for_figure(df, experiment, unit="days", palette=MAOA_FIGURE_PALETTE, threshold_spikes_per_min=5):
@@ -823,6 +845,20 @@ def run_mea_analysis_for_figure(df, experiment, unit="days", palette=MAOA_FIGURE
 # For Grouped Analysis (Separate Run)
 def run_grouped_analysis(df, experiment):
     df_exp = df[df["experiment"] == experiment].copy()
-    # Apply Genotype logic... (as above)
+    
+    # 1. ACTUAL Genotype assignment logic
+    def assign_genotype(line):
+        if line in {"C30", "C12c"}: return "Xa:WT/Xi:MUT"
+        if line in {"C90", "C90m"}: return "Xa:MUT/Xi:WT"
+        if line in {"GM", "MAOA/B−/Y"}: return "MAOA/B$^{-/Y}$"
+        return "other"
+    
+    df_exp["group"] = df_exp["cell_line"].apply(assign_genotype)
+
+    # 2. Filter out 'other' to keep the plot clean
+    df_exp = df_exp[df_exp["group"] != "other"]
+
+    # 3. Run the analysis
     for feat in ["firing", "burst", "network", "synchrony"]:
+        print(f"\n--- GENERATING GROUPED PLOTS FOR {feat.upper()} ---")
         plot_grouped_genotype_analysis(df_exp, feat, MAOA_FIGURE_PALETTE, PLOT_ORDER)
