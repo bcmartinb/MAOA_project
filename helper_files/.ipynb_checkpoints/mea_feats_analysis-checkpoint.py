@@ -741,6 +741,26 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             if feature == "firing": elec_df = elec_df[elec_df["v"] >= threshold_hz]
             draw_trajectory_panel(elec_df, "v", "Electrode-Level")
 
+
+def format_table_with_stars(df):
+    """
+    Identifies p-value columns in the time-point table and 
+    converts them to significance stars.
+    """
+    df_stars = df.copy()
+    
+    # Identify comparison columns (e.g., 'GroupA vs GroupB')
+    comp_cols = [c for c in df_stars.columns if " vs " in c]
+    
+    # Apply your get_stars function to comparisons and the ANOVA column
+    for col in comp_cols:
+        df_stars[col] = df_stars[col].apply(get_stars)
+    
+    if "ANOVA_p" in df_stars.columns:
+        df_stars["ANOVA_p"] = df_stars["ANOVA_p"].apply(get_stars)
+        
+    return df_stars
+
 #GROUPED 
 
 
@@ -872,19 +892,22 @@ def run_mea_analysis_for_figure(df, experiment, unit="days", palette=MAOA_FIGURE
         print(f"\n{'='*40}\nFEATURE: {feat.upper()}\n{'='*40}")
         plot_figure_boxplots_for_paper(df_exp, feat, palette, PLOT_ORDER, unit)
         
-        # Well-Level Stats Table
+        # --- WELL-LEVEL STATS ---
         print("\n--- WELL-LEVEL STATS ---")
         well_stats = run_comprehensive_stats(df_exp, feat, level="well", unit=unit)
         print("ANOVA Interaction:\n", well_stats["anova"])
-        print("Time-Point Table:\n", well_stats["table"].to_string(index=False))
         
-        # Electrode-Level Stats Table (Only for Firing/Burst)
+        # Print Star version for quick reading
+        print("\nTime-Point Table (Significance Stars):")
+        print(format_table_with_stars(well_stats["table"]).to_string(index=False))
+        
+        # --- ELECTRODE-LEVEL STATS ---
         if feat in ["firing", "burst"]:
             print(f"\n--- ELECTRODE-LEVEL {feat.upper()} STATS ---")
             elec_stats = run_comprehensive_stats(df_exp, feat, level="electrode", unit=unit)
-            print("ANOVA Interaction:\n", elec_stats["anova"])
-            print("Time-Point Table:\n", elec_stats["table"].to_string(index=False))
-
+            
+            print("\nTime-Point Table (Significance Stars):")
+            print(format_table_with_stars(elec_stats["table"]).to_string(index=False))
 # For Grouped Analysis (Separate Run)
 def run_grouped_analysis(df, experiment):
     df_exp = df[df["experiment"] == experiment].copy()
