@@ -400,7 +400,7 @@ def _clean_anova_table(anova):
 
 
 def assign_group(line):
-    mutant_lines = {"C90", "C90m"}
+    mutant_lines = {"C71", "C3"}
     ctrl_lines = { "C30", "C12c"}
     other = {"H9", "C90", "C12","C54", "C3", "C71"}
     if line in mutant_lines:
@@ -855,8 +855,8 @@ def run_mea_analysis_for_figure(df, experiment, unit="days", palette=MAOA_FIGURE
     df_exp = df[df["experiment"] == experiment].copy()
     
     def assign_genotype(line):
-        if line in {"C30", "C12c"}: return "Xa:WT/Xi:MUT"
-        if line in {"C90", "C90m"}: return "Xa:MUT/Xi:WT"
+        if line in {"C30"}: return "Xa:WT/Xi:MUT"
+        if line in {"C71", "C3"}: return "Xa:MUT/Xi:WT"
         if line in {"GM", "MAOA/B−/Y"}: return "MAOA/B$^{-/Y}$"
         return "other"
     
@@ -892,7 +892,7 @@ def run_grouped_analysis(df, experiment):
     # 1. ACTUAL Genotype assignment logic
     def assign_genotype(line):
         if line in {"C30", "C12c"}: return "Xa:WT/Xi:MUT"
-        if line in {"C90", "C90m"}: return "Xa:MUT/Xi:WT"
+        if line in {"C71", "C3"}: return "Xa:MUT/Xi:WT"
         if line in {"GM", "MAOA/B−/Y"}: return "MAOA/B$^{-/Y}$"
         return "other"
     
