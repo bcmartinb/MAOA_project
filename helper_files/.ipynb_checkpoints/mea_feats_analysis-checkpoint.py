@@ -74,9 +74,9 @@ def plot_plate_map(df, plate_name, use_group=False, double_label=False):
 
         # fixed colors for 3 biological groups
         color_map = {
-            "Mutant": "#FF9999",
-            "Ctrl":     "#99CCFF",
-            "GM":     "#CCFFCC",
+            "Mutant": "#EAC3EB",
+            "Ctrl":     "#9C899C",
+            "GM":     "#E980C0",
         }
 
         # ensure unknown groups get a color
@@ -742,6 +742,8 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             draw_trajectory_panel(elec_df, "v", "Electrode-Level")
 
 #GROUPED 
+
+
 def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes_per_min=5):
     df = df.copy()
     threshold_hz = threshold_spikes_per_min / 60.0
@@ -751,46 +753,82 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
         data = data.dropna(subset=[y_col])
         if data.empty: return
         
+        # 1. Stats Calculation (Tukey HSD for brackets)
         try:
-            model = smf.ols(f"{y_col} ~ C(group)", data=data).fit()
-            p_anova = anova_lm(model, typ=2).loc["C(group)", "PR(>F)"]
-            anova_summary = f"ANOVA: {get_stars(p_anova)}"
             comp = mc.MultiComparison(data[y_col], data["group"])
-            ph_df = pd.DataFrame(data=comp.tukeyhsd().summary().data[1:], columns=comp.tukeyhsd().summary().data[0])
-            posthoc_data = [{"g1": r['group1'], "g2": r['group2'], "star": get_stars(r['p-adj']), 
-                             "d": calculate_cohens_d(data[data["group"]==r['group1']][y_col], 
-                                                     data[data["group"]==r['group2']][y_col])} for _, r in ph_df.iterrows()]
-        except: 
-            anova_summary, posthoc_data = "ANOVA Error", []
+            ph_df = pd.DataFrame(data=comp.tukeyhsd().summary().data[1:], 
+                                 columns=comp.tukeyhsd().summary().data[0])
+        except Exception as e:
+            print(f"Stats error in {level_name} {feat_label}: {e}")
+            ph_df = pd.DataFrame()
 
-        plt.figure(figsize=(14, 8))
+        plt.figure(figsize=(10, 8))
         sns.set_style("ticks")
-        ax = sns.boxplot(data=data, x="group", y=y_col, order=order, palette=palette, showfliers=False, width=0.5, boxprops=dict(alpha=0.8, edgecolor='black'))
-        sns.stripplot(data=data, x="group", y=y_col, order=order, palette=palette, alpha=0.25, jitter=0.2, size=5, legend=False)
+        
+        # A. Main Categorical Plot
+        ax = sns.boxplot(data=data, x="group", y=y_col, order=order,
+                         palette=palette, showfliers=False, width=0.5,
+                         boxprops=dict(alpha=0.8, edgecolor='black'))
+        
+        sns.stripplot(data=data, x="group", y=y_col, order=order,
+                      palette=palette, alpha=0.25, jitter=0.2, size=5, legend=False)
 
-        res_x, res_y = 1.05, 0.90
-        plt.text(res_x, 0.96, anova_summary, transform=ax.transAxes, fontsize=FONT_SIZE, fontweight='bold', va='top')
-        curr_y = res_y
-        for res in posthoc_data:
-            ax.text(res_x, curr_y, f" {res['g1']} ", transform=ax.transAxes, fontweight='bold', fontsize=FONT_SIZE, va='top', bbox=dict(boxstyle='round,pad=0.2', facecolor=palette[res['g1']], alpha=0.6, edgecolor='none'))
-            ax.text(res_x + 0.38, curr_y, f" {res['g2']} ", transform=ax.transAxes, fontweight='bold', fontsize=FONT_SIZE, va='top', bbox=dict(boxstyle='round,pad=0.2', facecolor=palette[res['g2']], alpha=0.6, edgecolor='none'))
-            ax.text(res_x + 0.33, curr_y, "vs", transform=ax.transAxes, fontsize=FONT_SIZE, va='top', ha='right')
-            ax.text(res_x, curr_y - 0.05, f"({res['star']}, Cohen's d: {res['d']:.2f})", transform=ax.transAxes, fontsize=FONT_SIZE, va='top')
-            curr_y -= 0.14 
+        # B. Brackets & Stars logic
+        y_min, y_max = data[y_col].min(), data[y_col].max()
+        # Bracket starting height (5% above max data point)
+        bracket_level = y_max + (y_max * 0.05) 
+        # Vertical spacing between stacked brackets
+        step = (y_max - y_min) * 0.12 
 
-        plt.title(f"Grouped {level_name} {feat_label}", fontsize=FONT_SIZE + 2, fontweight='bold')
-        plt.ylabel(f"{level_name} {feat_label} (Hz)" if "Index" not in feat_label else f"{level_name} {feat_label}", fontsize=FONT_SIZE + 6)
-        plt.xlabel("Genotype", fontsize=FONT_SIZE + 6)
-        ax.tick_params(axis='both', labelsize=FONT_SIZE + 6)
-        plt.yticks(fontsize=16)
-        plt.xticks(fontsize=16)
+        group_idx = {name: i for i, name in enumerate(order)}
+
+        if not ph_df.empty:
+            for _, row in ph_df.iterrows():
+                g1, g2 = row['group1'], row['group2']
+                p_adj = row['p-adj']
+                
+                if g1 in group_idx and g2 in group_idx:
+                    x1, x2 = group_idx[g1], group_idx[g2]
+                    stars = get_stars(p_adj) # uses your existing get_stars func
+                    
+                    # Draw the horizontal bracket line with small vertical 'ticks' at the ends
+                    plt.plot([x1, x1, x2, x2], 
+                             [bracket_level, bracket_level + (step*0.2), bracket_level + (step*0.2), bracket_level], 
+                             lw=1.5, color='black')
+                    
+                    # Add the stars or n.s. label
+                    plt.text((x1 + x2) * 0.5, bracket_level + (step*0.22), stars, 
+                             ha='center', va='bottom', color='black', 
+                             fontsize=FONT_SIZE + 6, fontweight='bold')
+                    
+                    # Move the next bracket level higher to avoid overlap
+                    bracket_level += step
+
+        # C. Labels and Units
+        plt.title(f"{level_name} {feat_label}", fontsize=FONT_SIZE + 2, fontweight='bold')
+        
+        # Unit Logic: Hz for rates, a.u. for Synchrony Index
+        if "Synchrony" in feat_label:
+            unit_label = ""
+        else:
+            unit_label = "(Hz)"
+            
+        plt.ylabel(f"{level_name} {feat_label} {unit_label}", fontsize=FONT_SIZE + 6)
+        plt.yticks(fontsize=FONT_SIZE + 6)
+        plt.xticks(fontsize=FONT_SIZE + 6)
+        
+       
+        
         sns.despine()
-        plt.subplots_adjust(right=0.55); plt.show()
+        plt.tight_layout()
+        plt.show()
 
-    # Feature Logic
+    # --- Feature Routing ---
     if feature == "firing":
         df["well_val"] = df["firing_rate_stats_hz"].str[0]
         draw_grouped_panel(df, "well_val", "Well-Level", "Firing Rate")
+        
+        # Electrode-level expansion
         expanded = [{"group": r["group"], "v": v} for _, r in df.iterrows() for v in r["firing_rate_vector_hz"]]
         e_df = pd.DataFrame(expanded).dropna()
         e_df = e_df[e_df["v"] >= threshold_hz]
@@ -799,6 +837,7 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
     elif feature == "burst":
         df["well_val"] = df["burst_rate_stats_hz"].str[0]
         draw_grouped_panel(df, "well_val", "Well-Level", "Burst Rate")
+        
         expanded = [{"group": r["group"], "v": v} for _, r in df.iterrows() for v in r["burst_rate_vector_hz"]]
         e_df = pd.DataFrame(expanded).dropna()
         draw_grouped_panel(e_df, "v", "Electrode-Level", "Burst Rate")
