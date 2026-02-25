@@ -10,6 +10,8 @@ import statsmodels.formula.api as smf
 import statsmodels.stats.multicomp as mc
 from scipy.stats import linregress, ttest_ind
 
+from helper_files.maoa_plate_loader import *
+
 
 
 # Extract vectors
