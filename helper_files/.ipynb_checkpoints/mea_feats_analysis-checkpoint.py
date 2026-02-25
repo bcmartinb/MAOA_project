@@ -928,3 +928,144 @@ def run_grouped_analysis(df, experiment):
     for feat in ["firing", "burst", "network", "synchrony"]:
         print(f"\n--- GENERATING GROUPED PLOTS FOR {feat.upper()} ---")
         plot_grouped_genotype_analysis(df_exp, feat, MAOA_FIGURE_PALETTE, PLOT_ORDER)
+
+
+
+
+#raster plots
+def find_best_single_window(well_spikes, goal="sync", duration=60):
+    if well_spikes.empty: return 0
+    t_max = well_spikes["time_s"].max()
+    bins = np.arange(0, t_max, 0.05)
+    counts, bin_edges = np.histogram(well_spikes["time_s"], bins=bins)
+    
+    window_bins = int(duration / 0.05)
+    step_bins = int(5 / 0.05)
+    
+    best_start = 0
+    best_score = -float('inf')
+    
+    for i in range(0, len(counts) - window_bins, step_bins):
+        start_t = bin_edges[i]
+        w_mask = (well_spikes["time_s"] >= start_t) & (well_spikes["time_s"] < start_t + duration)
+        w_spikes = well_spikes[w_mask]
+        
+        total_spikes = len(w_spikes)
+        active_elecs = w_spikes["electrode"].nunique()
+        
+        # Minimum visibility threshold (so it's not just a blank white box)
+        if active_elecs < 8 or total_spikes < 30: continue 
+            
+        w_counts = counts[i : i + window_bins]
+        max_peak = np.max(w_counts)
+        
+        if goal == "sync":
+            # Control: Reward huge vertical columns
+            score = max_peak * active_elecs
+        else:
+            # Mutants: We want it QUIET and ASYNCHRONOUS. 
+            # So we heavily penalize high peaks. The lower the max peak, the better.
+            score = -max_peak 
+            
+        if score > best_score:
+            best_score = score
+            best_start = start_t
+            
+    return best_start if best_score != -float('inf') else well_spikes["time_s"].min()
+
+def generate_activity_gallery(big_df, experiment="Exp3", num_options=5, duration=60):
+    print(f"--- Generating Gallery (Low-Activity Mutants) for {experiment} ---")
+    
+    df_exp = big_df[big_df["experiment"] == experiment].copy()
+    
+    def assign_genotype(line):
+        if line in {"C30", "C12c"}: return "Xa:WT/Xi:MUT"
+        if line in {"C71", "C3"}: return "Xa:MUT/Xi:WT"
+        if line in {"GM", "MAOA/B−/Y"}: return "MAOA/B$^{-/Y}$"
+        return "other"
+
+    df_exp["group"] = df_exp["cell_line"].apply(assign_genotype)
+    df_exp["mean_fr"] = df_exp["firing_rate_stats_hz"].apply(lambda x: x[0] if isinstance(x, list) else np.nan)
+    
+    gallery_selections = {"Xa:WT/Xi:MUT": [], "Xa:MUT/Xi:WT": [], "MAOA/B$^{-/Y}$": []}
+    
+    # 1. CONTROL: High Sync, healthy activity
+    ctrl_sub = df_exp[df_exp["group"] == "Xa:WT/Xi:MUT"].dropna(subset=["synchrony_index", "mean_fr"])
+    if not ctrl_sub.empty:
+        active_ctrl = ctrl_sub[ctrl_sub["mean_fr"] >= ctrl_sub["mean_fr"].quantile(0.50)]
+        top_ctrls = active_ctrl.sort_values("synchrony_index", ascending=False).head(num_options)
+        for _, row in top_ctrls.iterrows():
+            gallery_selections["Xa:WT/Xi:MUT"].append({"row": row, "goal": "sync"})
+        
+    # 2. MUTANTS: Lower end of active, lowest sync
+    for mut in ["Xa:MUT/Xi:WT", "MAOA/B$^{-/Y}$"]:
+        sub = df_exp[df_exp["group"] == mut].dropna(subset=["synchrony_index", "mean_fr"])
+        if not sub.empty:
+            # Target the 15th to 50th percentile of firing rate (quiet, but not dead)
+            lower_bound = sub["mean_fr"].quantile(0.15)
+            upper_bound = sub["mean_fr"].quantile(0.50)
+            
+            target_muts = sub[(sub["mean_fr"] >= lower_bound) & (sub["mean_fr"] <= upper_bound)]
+            
+            # Fallback if too strict
+            if len(target_muts) < num_options:
+                target_muts = sub[sub["mean_fr"] >= lower_bound]
+                
+            # Sort by lowest sync
+            top_muts = target_muts.sort_values("synchrony_index", ascending=True).head(num_options)
+            for _, row in top_muts.iterrows():
+                gallery_selections[mut].append({"row": row, "goal": "async_low"})
+
+    # PLOTTING
+    groups = ["Xa:WT/Xi:MUT", "Xa:MUT/Xi:WT", "MAOA/B$^{-/Y}$"]
+    fig, axes = plt.subplots(3, num_options, figsize=(5 * num_options, 12), sharex=True, sharey=True)
+    
+    for row_idx, group in enumerate(groups):
+        options = gallery_selections[group]
+        color = MAOA_FIGURE_PALETTE[group]
+        
+        for col_idx in range(num_options):
+            ax = axes[row_idx, col_idx]
+            
+            if col_idx >= len(options):
+                ax.axis('off') 
+                continue
+                
+            info = options[col_idx]
+            row_data = info["row"]
+            well = row_data["well"]
+            plate = row_data["plate_name"]
+            
+            # Load and filter artifacts
+            spikes = load_spike_list(row_data["spike_list_path"])
+            well_spikes = spikes[spikes["well"] == well]
+            t_tot = well_spikes["time_s"].max() - well_spikes["time_s"].min()
+            if t_tot > 0:
+                c = well_spikes["electrode"].value_counts()
+                well_spikes = well_spikes[well_spikes["electrode"].isin(c[c / t_tot < 15].index)]
+                
+            start_t = find_best_single_window(well_spikes, goal=info["goal"], duration=duration)
+            end_t = start_t + duration
+            
+            w_spikes = well_spikes[(well_spikes["time_s"] >= start_t) & (well_spikes["time_s"] < end_t)]
+            expected = [f"{well}_{r}{c}" for r in range(1, 9) for c in range(1, 9)]
+            trains = [w_spikes[w_spikes["electrode"] == e]["time_s"] - start_t for e in expected]
+            
+            ax.eventplot(trains, color='black', linelengths=0.9, linewidths=1.2)
+            
+            title_str = f"{group}\n{plate} | Well {well} | Start: {start_t:.0f}s"
+            ax.set_title(title_str, color=color, fontweight='bold', fontsize=12)
+            ax.set_ylim(-1, 64)
+            ax.set_xlim(0, duration)
+            
+            if col_idx == 0:
+                ax.set_ylabel("Electrode Unit", fontsize=14)
+                ax.set_yticks([0, 15, 31, 47, 63])
+                ax.set_yticklabels([1, 16, 32, 48, 64])
+                
+    for ax in axes[-1, :]:
+        ax.set_xlabel("Time (sec)", fontsize=14)
+        
+    sns.despine()
+    plt.tight_layout()
+    plt.show()
