@@ -697,7 +697,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
         except:
             traj_summary, posthoc_text = "Trajectory: N/A", ""
 
-        plt.figure(figsize=(12, 7))
+        plt.figure(figsize=(10, 8))
         sns.set_style("ticks")
         ax = sns.boxplot(data=data, x="time_val", y=y_col, hue="group", hue_order=order, 
                          palette=palette, showfliers=False, width=0.6, 
@@ -784,7 +784,7 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
             print(f"Stats error in {level_name} {feat_label}: {e}")
             ph_df = pd.DataFrame()
 
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(6, 8))
         sns.set_style("ticks")
         
         # A. Main Categorical Plot
