@@ -562,7 +562,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
 
     xlabel = f"Age ({unit.capitalize()})"
 
-    def draw_trajectory_panel(data, y_col, level_name, split_axis=False):
+    def draw_trajectory_panel(data, y_col, level_name, split_axis=False, zoom_max_override=None):
         data = data.dropna(subset=[y_col]).sort_values("age_days")
         if data.empty: return
 
@@ -611,15 +611,29 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
                 ax.get_legend().remove()
 
         if split_axis:
-            # Zoom ceiling: 90th percentile captures the bulk of the data
-            zoom_max = np.percentile(data[y_col].dropna(), 90) * 1.20
+            # zoom_max: include every whisker top but clip outlier dots
+            whisker_tops = []
+            for g in data['group'].unique():
+                for t in data['time_val'].unique():
+                    sub = (data[(data['group'] == g) & (data['time_val'] == t)]
+                           [y_col].dropna())
+                    if len(sub) >= 2:
+                        q1, q3 = sub.quantile(0.25), sub.quantile(0.75)
+                        fence = q3 + 1.5 * (q3 - q1)
+                        non_out = sub[sub <= fence]
+                        whisker_tops.append(non_out.max() if not non_out.empty else q3)
+            zoom_max = zoom_max_override if zoom_max_override is not None else (
+                (max(whisker_tops) if whisker_tops
+                 else data[y_col].quantile(0.9)) * 1.10)
             full_max = data[y_col].max() * 1.12
 
-            fig, ax = plt.subplots(figsize=(10, 8))
+            # ── Figure layout: main (zoomed) left, inset (full) right ─────────
+            fig = plt.figure(figsize=(14, 8))
             sns.set_style("white")
-            _plot_on(ax)
 
-            # Main axis: zoomed to bulk of data
+            # Main axes — left 55 % of figure
+            ax = fig.add_axes([0.09, 0.14, 0.52, 0.80])
+            _plot_on(ax)
             ax.set_ylim(0, zoom_max)
             ax.spines['bottom'].set_color('black')
             ax.spines['left'].set_color('black')
@@ -630,26 +644,25 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             ax.set_xlabel(xlabel, fontsize=30, color='black', fontweight='bold')
             ax.tick_params(axis='both', colors='black', length=7,
                            width=1.5, labelsize=26)
+            ax.text(0.03, 0.97,
+                    f"{traj_summary}\n{posthoc_text}".strip(),
+                    transform=ax.transAxes,
+                    fontsize=20, fontweight='bold', ha='left', va='top',
+                    bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray'))
 
-            # ── Inset: full range overview ────────────────────────────────────
-            ax_inset = ax.inset_axes([0.52, 0.45, 0.46, 0.50])
+            # Inset axes — right 28 % of figure, full y range
+            ax_inset = fig.add_axes([0.66, 0.14, 0.28, 0.80])
             _plot_on(ax_inset)
             ax_inset.set_ylim(0, full_max)
             ax_inset.spines['top'].set_visible(False)
             ax_inset.spines['right'].set_visible(False)
             ax_inset.spines['bottom'].set_color('black')
             ax_inset.spines['left'].set_color('black')
-            ax_inset.tick_params(axis='both', colors='black', length=3,
-                                 width=1, labelsize=13)
+            ax_inset.tick_params(axis='both', colors='black', length=7,
+                                 width=1.5, labelsize=26)
             ax_inset.set_xlabel("")
             ax_inset.set_ylabel("")
             ax_inset.set_xticklabels([])
-
-            ax.text(0.03, 0.97,
-                    f"{traj_summary}\n{posthoc_text}".strip(),
-                    transform=ax.transAxes,
-                    fontsize=20, fontweight='bold', ha='left', va='top',
-                    bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray'))
 
         else:
             fig, ax = plt.subplots(figsize=(10, 8))
@@ -672,7 +685,8 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
                     bbox=dict(facecolor='white', alpha=0.85,
                               edgecolor='gray'))
 
-        plt.tight_layout()
+        if not split_axis:
+            plt.tight_layout()
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
             fname = os.path.join(save_dir,
@@ -692,7 +706,8 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
         if expanded:
             elec_df = pd.DataFrame(expanded).dropna()
             if feature == "firing": elec_df = elec_df[elec_df["v"] >= threshold_hz]
-            draw_trajectory_panel(elec_df, "v", "Electrode-Level", split_axis=True)
+            zoom_override = 8 if feature == "firing" else None
+            draw_trajectory_panel(elec_df, "v", "Electrode-Level", split_axis=True, zoom_max_override=zoom_override)
 
 
 def format_table_with_stars(df):
