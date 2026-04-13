@@ -562,7 +562,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
 
     xlabel = f"Age ({unit.capitalize()})"
 
-    def draw_trajectory_panel(data, y_col, level_name, split_axis=False, zoom_max_override=None):
+    def draw_trajectory_panel(data, y_col, level_name, split_axis=False, zoom_max_override=None, broken_axis=False):
         data = data.dropna(subset=[y_col]).sort_values("age_days")
         if data.empty: return
 
@@ -664,6 +664,77 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             ax_inset.set_ylabel("")
             ax_inset.set_xticklabels([])
 
+        elif broken_axis:
+            # ── Broken y-axis: bottom panel zoomed, top panel outliers ─────────
+            # Use a global fence across all data to find the highest whisker top,
+            # then add 25% padding so seaborn's per-box whiskers always fit.
+            vals = data[y_col].dropna()
+            q1_g, q3_g = vals.quantile(0.25), vals.quantile(0.75)
+            global_fence = q3_g + 1.5 * (q3_g - q1_g)
+            global_whisker_top = vals[vals <= global_fence].max()
+            auto_zoom = global_whisker_top * 1.25
+            # use override directly when provided; fall back to auto
+            zoom_max = zoom_max_override if zoom_max_override is not None else auto_zoom
+            full_max = data[y_col].max() * 1.12
+
+            # Floor of upper panel: just below first outlier above zoom_max
+            above = data[y_col][data[y_col] > zoom_max].dropna()
+            y_hi_min = zoom_max
+
+            fig, (ax_top, ax_bot) = plt.subplots(
+                2, 1, figsize=(16, 10), sharex=True,
+                gridspec_kw={
+                    'height_ratios': [0.25, 0.75],
+                    'hspace': 0.06
+                }
+            )
+            sns.set_style("white")
+            _plot_on(ax_top)
+            _plot_on(ax_bot)
+
+            ax_bot.set_ylim(0, zoom_max)
+            ax_top.set_ylim(y_hi_min, full_max)
+
+            # Ticks to nearest tenth, prune edges near the break
+            # choose decimal places based on the scale of the zoomed panel
+            if zoom_max < 1:
+                fmt = plt.FormatStrFormatter('%.2f')
+            else:
+                fmt = plt.FormatStrFormatter('%.1f')
+            ax_bot.yaxis.set_major_locator(plt.MaxNLocator(nbins=5, prune='upper'))
+            ax_bot.yaxis.set_major_formatter(fmt)
+            ax_top.yaxis.set_major_locator(plt.MaxNLocator(nbins=2, prune='lower'))
+            ax_top.yaxis.set_major_formatter(fmt)
+
+            # Spine styling — clean break, no decorations
+            for ax in (ax_top, ax_bot):
+                ax.spines['right'].set_visible(False)
+            ax_top.spines['top'].set_visible(False)
+            ax_top.spines['bottom'].set_visible(False)
+            ax_top.spines['left'].set_color('black')
+            ax_bot.spines['top'].set_visible(False)
+            ax_bot.spines['bottom'].set_color('black')
+            ax_bot.spines['left'].set_color('black')
+
+            # Tick / label styling — rotate x labels to prevent overlap
+            ax_top.tick_params(axis='x', length=0, labelbottom=False)
+            ax_top.tick_params(axis='y', colors='black', length=7, width=1.5, labelsize=26)
+            ax_bot.tick_params(axis='y', colors='black', length=7, width=1.5, labelsize=26)
+            ax_bot.tick_params(axis='x', colors='black', length=7, width=1.5, labelsize=26)
+            plt.setp(ax_bot.get_xticklabels(), rotation=45, ha='right')
+
+            ax_bot.set_xlabel(xlabel, fontsize=30, color='black', fontweight='bold')
+            ax_top.set_xlabel("")
+            fig.text(0.02, 0.5, f"{level_name} {ylabel_base} (Hz)",
+                     va='center', rotation='vertical',
+                     fontsize=30, color='black', fontweight='bold')
+
+            ax_top.text(0.97, 0.95,
+                        f"{traj_summary}\n{posthoc_text}".strip(),
+                        transform=ax_top.transAxes,
+                        fontsize=20, fontweight='bold', ha='right', va='top',
+                        bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray'))
+
         else:
             fig, ax = plt.subplots(figsize=(10, 8))
             sns.set_style("white")
@@ -706,8 +777,9 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
         if expanded:
             elec_df = pd.DataFrame(expanded).dropna()
             if feature == "firing": elec_df = elec_df[elec_df["v"] >= threshold_hz]
-            zoom_override = 8 if feature == "firing" else None
-            draw_trajectory_panel(elec_df, "v", "Electrode-Level", split_axis=True, zoom_max_override=zoom_override)
+            zoom_overrides = {"firing": 11, "burst": 0.25}
+            zoom_override = zoom_overrides.get(feature, None)
+            draw_trajectory_panel(elec_df, "v", "Electrode-Level", broken_axis=True, zoom_max_override=zoom_override)
 
 
 def format_table_with_stars(df):
