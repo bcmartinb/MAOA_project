@@ -566,6 +566,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
         data = data.dropna(subset=[y_col]).sort_values("age_days")
         if data.empty: return
 
+        ph_df = pd.DataFrame()
         try:
             model = smf.ols(f"{y_col} ~ C(group) * C(time_val)", data=data).fit()
             p_int = anova_lm(model, typ=2).loc["C(group):C(time_val)", "PR(>F)"]
@@ -639,15 +640,17 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             ax.spines['left'].set_color('black')
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.set_ylabel(f"{level_name} {ylabel_base} (Hz)",
-                          fontsize=30, color='black', fontweight='bold')
-            ax.set_xlabel(xlabel, fontsize=30, color='black', fontweight='bold')
+            ax.set_ylabel("")
+            ax.set_title(f"{level_name} {ylabel_base} (Hz)",
+                         fontsize=34, color='black', fontweight='bold', pad=30)
+            ax.set_xlabel(xlabel, fontsize=34, color='black', fontweight='bold')
             ax.tick_params(axis='both', colors='black', length=7,
-                           width=1.5, labelsize=26)
+                           width=1.5, labelsize=30)
+            ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
             ax.text(0.03, 0.97,
                     f"{traj_summary}\n{posthoc_text}".strip(),
                     transform=ax.transAxes,
-                    fontsize=20, fontweight='bold', ha='left', va='top',
+                    fontsize=24, fontweight='bold', ha='left', va='top',
                     bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray'))
 
             # Inset axes — right 28 % of figure, full y range
@@ -659,7 +662,8 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             ax_inset.spines['bottom'].set_color('black')
             ax_inset.spines['left'].set_color('black')
             ax_inset.tick_params(axis='both', colors='black', length=7,
-                                 width=1.5, labelsize=26)
+                                 width=1.5, labelsize=30)
+            ax_inset.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
             ax_inset.set_xlabel("")
             ax_inset.set_ylabel("")
             ax_inset.set_xticklabels([])
@@ -681,89 +685,158 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             above = data[y_col][data[y_col] > zoom_max].dropna()
             y_hi_min = zoom_max
 
-            fig, (ax_top, ax_bot) = plt.subplots(
-                2, 1, figsize=(16, 10), sharex=True,
-                gridspec_kw={
-                    'height_ratios': [0.25, 0.75],
-                    'hspace': 0.06
-                }
-            )
+            # set_style BEFORE rc_context so it doesn't reset font rcParams
             sns.set_style("white")
-            _plot_on(ax_top)
-            _plot_on(ax_bot)
+            rc = {'font.size': 38, 'axes.labelsize': 42,
+                  'xtick.labelsize': 38, 'ytick.labelsize': 38}
+            with plt.rc_context(rc):
+                fig, (ax_top, ax_bot) = plt.subplots(
+                    2, 1, figsize=(16, 10), sharex=True,
+                    gridspec_kw={
+                        'height_ratios': [0.25, 0.75],
+                        'hspace': 0.06
+                    }
+                )
+                _plot_on(ax_top)
+                _plot_on(ax_bot)
+                # Force font sizes after seaborn rendering (seaborn may override rcParams)
+                for _ax in (ax_top, ax_bot):
+                    _ax.tick_params(axis='y', labelsize=38)
+                ax_bot.tick_params(axis='x', labelsize=38)
 
-            ax_bot.set_ylim(0, zoom_max)
-            ax_top.set_ylim(y_hi_min, full_max)
+                ax_bot.set_ylim(0, zoom_max)
+                ax_top.set_ylim(y_hi_min, full_max)
 
-            # Ticks to nearest tenth, prune edges near the break
-            # choose decimal places based on the scale of the zoomed panel
-            if zoom_max < 1:
-                fmt = plt.FormatStrFormatter('%.2f')
-            else:
-                fmt = plt.FormatStrFormatter('%.1f')
-            ax_bot.yaxis.set_major_locator(plt.MaxNLocator(nbins=5, prune='upper'))
-            ax_bot.yaxis.set_major_formatter(fmt)
-            ax_top.yaxis.set_major_locator(plt.MaxNLocator(nbins=2, prune='lower'))
-            ax_top.yaxis.set_major_formatter(fmt)
+                # Ticks to nearest tenth — use explicit ticks to avoid ">" symbols
+                if zoom_max < 1:
+                    fmt = plt.FormatStrFormatter('%.2f')
+                else:
+                    fmt = plt.FormatStrFormatter('%.1f')
+                ax_bot.yaxis.set_major_locator(plt.MaxNLocator(nbins=4, prune='upper'))
+                ax_bot.yaxis.set_major_formatter(fmt)
+                # Explicit 2 ticks in the top panel range, skipping the break boundary
+                top_ticks = np.linspace(y_hi_min, full_max, 3)[1:]
+                ax_top.set_yticks(top_ticks)
+                ax_top.yaxis.set_major_formatter(fmt)
 
-            # Spine styling — clean break, no decorations
-            for ax in (ax_top, ax_bot):
-                ax.spines['right'].set_visible(False)
-            ax_top.spines['top'].set_visible(False)
-            ax_top.spines['bottom'].set_visible(False)
-            ax_top.spines['left'].set_color('black')
-            ax_bot.spines['top'].set_visible(False)
-            ax_bot.spines['bottom'].set_color('black')
-            ax_bot.spines['left'].set_color('black')
+                # Spine styling — clean break, no decorations
+                for ax in (ax_top, ax_bot):
+                    ax.spines['right'].set_visible(False)
+                ax_top.spines['top'].set_visible(False)
+                ax_top.spines['bottom'].set_visible(False)
+                ax_top.spines['left'].set_color('black')
+                ax_bot.spines['top'].set_visible(False)
+                ax_bot.spines['bottom'].set_color('black')
+                ax_bot.spines['left'].set_color('black')
 
-            # Tick / label styling — rotate x labels to prevent overlap
-            ax_top.tick_params(axis='x', length=0, labelbottom=False)
-            ax_top.tick_params(axis='y', colors='black', length=7, width=1.5, labelsize=26)
-            ax_bot.tick_params(axis='y', colors='black', length=7, width=1.5, labelsize=26)
-            ax_bot.tick_params(axis='x', colors='black', length=7, width=1.5, labelsize=26)
-            plt.setp(ax_bot.get_xticklabels(), rotation=45, ha='right')
+                ax_top.tick_params(axis='x', length=0, labelbottom=False)
+                ax_top.tick_params(axis='y', colors='black', length=7, width=1.5)
+                ax_bot.tick_params(axis='y', colors='black', length=7, width=1.5)
+                ax_bot.tick_params(axis='x', colors='black', length=7, width=1.5,
+                                   rotation=45)
 
-            ax_bot.set_xlabel(xlabel, fontsize=30, color='black', fontweight='bold')
-            ax_top.set_xlabel("")
-            fig.text(0.02, 0.5, f"{level_name} {ylabel_base} (Hz)",
-                     va='center', rotation='vertical',
-                     fontsize=30, color='black', fontweight='bold')
+                ax_bot.set_xlabel(xlabel, fontsize=42, color='black', fontweight='bold')
+                ax_top.set_xlabel("")
 
-            ax_top.text(0.97, 0.95,
-                        f"{traj_summary}\n{posthoc_text}".strip(),
-                        transform=ax_top.transAxes,
-                        fontsize=20, fontweight='bold', ha='right', va='top',
-                        bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray'))
+                fig.suptitle(f"{level_name} {ylabel_base} (Hz)",
+                             fontsize=42, color='black', fontweight='bold', y=1.02)
+
+                ax_top.text(0.97, 0.95, traj_summary,
+                            transform=ax_top.transAxes,
+                            fontsize=24, fontweight='bold', ha='right', va='top',
+                            bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray'))
+
+                fig.subplots_adjust(left=0.10, right=0.97, top=0.97, bottom=0.14)
 
         else:
-            fig, ax = plt.subplots(figsize=(10, 8))
+            fig, ax = plt.subplots(figsize=(14, 8))
             sns.set_style("white")
             _plot_on(ax)
             ax.spines['bottom'].set_color('black')
             ax.spines['left'].set_color('black')
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.set_ylabel(f"{level_name} {ylabel_base} (Hz)",
-                          fontsize=30, color='black', fontweight='bold')
-            ax.set_xlabel(xlabel, fontsize=30, color='black',
+            ax.set_ylabel("")
+            ax.set_title(f"{level_name} {ylabel_base} (Hz)",
+                         fontsize=34, color='black', fontweight='bold', pad=30)
+            ax.set_xlabel(xlabel, fontsize=34, color='black',
                           fontweight='bold')
             ax.tick_params(axis='both', colors='black', length=7,
-                           width=1.5, labelsize=26)
-            ax.text(0.97, 0.95,
-                    f"{traj_summary}\n{posthoc_text}".strip(),
+                           width=1.5, labelsize=30)
+            ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
+            if data[y_col].median() < 1:
+                ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.2f'))
+            ax.text(0.97, 0.95, traj_summary,
                     transform=ax.transAxes,
-                    fontsize=20, fontweight='bold', ha='right', va='top',
+                    fontsize=24, fontweight='bold', ha='right', va='top',
                     bbox=dict(facecolor='white', alpha=0.85,
                               edgecolor='gray'))
 
-        if not split_axis:
-            plt.tight_layout()
+        if not split_axis and not broken_axis:
+            fig.subplots_adjust(left=0.20, right=0.97, top=0.97, bottom=0.14)
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
             fname = os.path.join(save_dir,
                                  f"{feature}_{level_name.replace(' ', '_').lower()}.pdf")
-            plt.savefig(fname, bbox_inches='tight', transparent=True)
+            plt.savefig(fname, bbox_inches='tight', transparent=True, dpi=300)
         plt.show()
+
+        # ── Separate significance matrix (only when posthoc was run) ──────────
+        if not ph_df.empty:
+            sig_lookup = {}
+            for _, row in ph_df.iterrows():
+                stars = get_stars(row['p-adj'])
+                sig_lookup[(row['group1'], row['group2'])] = (stars, row['p-adj'])
+                sig_lookup[(row['group2'], row['group1'])] = (stars, row['p-adj'])
+
+            n = len(order)
+            cell = 1.6
+            fig_s, ax_s = plt.subplots(figsize=(n * cell + 1, n * cell + 1))
+            sns.set_style("white")
+            ax_s.set_xlim(0, n)
+            ax_s.set_ylim(0, n)
+            ax_s.set_aspect('equal')
+
+            for i, g1 in enumerate(order):
+                for j, g2 in enumerate(order):
+                    row_y = n - 1 - i
+                    if i == j:
+                        ax_s.add_patch(plt.Rectangle((j, row_y), 1, 1,
+                                                     color='#e8e8e8', zorder=1))
+                        continue
+                    stars, p_val = sig_lookup.get((g1, g2), ("ns", 1.0))
+                    bg = palette.get(g2, '#cccccc') if stars != "ns" else '#f5f5f5'
+                    ax_s.add_patch(plt.Rectangle((j, row_y), 1, 1,
+                                                 color=bg, alpha=0.35, zorder=1))
+                    fs = 22 if stars == "ns" else 28
+                    ax_s.text(j + 0.5, row_y + 0.5, stars,
+                              ha='center', va='center',
+                              fontsize=fs, fontweight='bold', color='black', zorder=2)
+
+            # Grid lines
+            for k in range(n + 1):
+                ax_s.axhline(k, color='white', lw=2, zorder=3)
+                ax_s.axvline(k, color='white', lw=2, zorder=3)
+
+            ax_s.set_xticks(np.arange(n) + 0.5)
+            ax_s.set_xticklabels(order, rotation=45, ha='right', fontsize=20, fontweight='bold')
+            for tick, g in zip(ax_s.get_xticklabels(), order):
+                tick.set_color(palette.get(g, 'black'))
+            ax_s.set_yticks(np.arange(n) + 0.5)
+            ax_s.set_yticklabels(order[::-1], fontsize=20, fontweight='bold')
+            for tick, g in zip(ax_s.get_yticklabels(), reversed(order)):
+                tick.set_color(palette.get(g, 'black'))
+            ax_s.tick_params(length=0)
+            ax_s.set_title(f"{level_name} {ylabel_base}\nPairwise Significance",
+                           fontsize=22, fontweight='bold', pad=20)
+            for spine in ax_s.spines.values():
+                spine.set_visible(False)
+            plt.tight_layout()
+            if save_dir:
+                fname_s = os.path.join(save_dir,
+                    f"{feature}_{level_name.replace(' ', '_').lower()}_significance.pdf")
+                plt.savefig(fname_s, bbox_inches='tight', transparent=True, dpi=300)
+            plt.show()
 
     draw_trajectory_panel(df, "plot_val", "Well-Level")
 
@@ -799,7 +872,7 @@ def format_table_with_stars(df):
 def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes_per_min=5, save_dir=None):
     df = df.copy()
     threshold_hz = threshold_spikes_per_min / 60.0
-    FONT_SIZE = 20
+    FONT_SIZE = 24
 
     def draw_grouped_panel(data, y_col, level_name, feat_label):
         data = data.dropna(subset=[y_col])
@@ -813,14 +886,14 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
             print(f"Stats error in {level_name} {feat_label}: {e}")
             ph_df = pd.DataFrame()
 
-        fig, ax = plt.subplots(figsize=(4, 6))
+        fig, ax = plt.subplots(figsize=(6, 7))
         sns.set_style("white")
         ax.yaxis.grid(False)
         ax.xaxis.grid(False)
 
         group_idx = {name: i for i, name in enumerate(order)}
         x_positions = np.arange(len(order))
-        bar_width = 0.5
+        bar_width = 0.85
 
         # Draw mean bars + SEM error bars
         for i, g in enumerate(order):
@@ -841,27 +914,22 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
                        edgecolors='none', zorder=5)
 
         ax.set_xticks(x_positions)
-        # Color each x-tick label to match its bar color (like the reference figure)
-        ax.set_xticklabels(order, fontsize=FONT_SIZE - 2, rotation=45, ha='right')
-        for tick_label, g in zip(ax.get_xticklabels(), order):
-            tick_label.set_color(palette.get(g, 'black'))
-            tick_label.set_fontweight('bold')
+        ax.set_xticklabels([''] * len(order))       # no x-axis labels
         ax.spines['bottom'].set_color('black')
         ax.spines['left'].set_color('black')
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-        # Hide x-axis tick marks; keep only y-axis ticks
         ax.tick_params(axis='x', length=0)
         ax.tick_params(axis='y', colors='black', length=5, width=1)
 
-        # Significance brackets — sort by span (adjacent pairs first)
+        # Significance — no brackets, just stars/ns centered between the compared bars
         all_vals = data[y_col].dropna()
         y_max_data = all_vals.max()
         y_min_data = all_vals.min()
         y_range = y_max_data - y_min_data if y_max_data != y_min_data else abs(y_max_data)
 
-        bracket_level = y_max_data + y_range * 0.08
-        step = y_range * 0.14
+        bracket_level = y_max_data + y_range * 0.005
+        step = y_range * 0.08
 
         if not ph_df.empty:
             pairs = []
@@ -875,32 +943,43 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
 
             for _, x1, x2, p_adj in pairs:
                 stars = get_stars(p_adj)
-                tip_h = step * 0.12
-                ax.plot([x1, x1, x2, x2],
-                        [bracket_level, bracket_level + tip_h,
-                         bracket_level + tip_h, bracket_level],
-                        lw=1.2, color='black', zorder=6)
-                ax.text((x1 + x2) * 0.5, bracket_level + tip_h * 1.1, stars,
+                star_fs = FONT_SIZE + 8 if stars == "ns" else FONT_SIZE + 16
+                ax.text((x1 + x2) * 0.5, bracket_level, stars,
                         ha='center', va='bottom', color='black',
-                        fontsize=FONT_SIZE + 2, fontweight='bold')
+                        fontsize=star_fs, fontweight='bold')
                 bracket_level += step
 
-        ax.set_ylim(bottom=0, top=bracket_level + step * 0.5)
+        ax.set_ylim(bottom=0, top=bracket_level + step * 0.15)
 
         if "Synchrony" in feat_label:
             unit_label = ""
         else:
             unit_label = "(Hz)"
 
-        plt.ylabel(f"{feat_label}\n{unit_label}", fontsize=FONT_SIZE + 2,
-                   color='black', fontweight='bold', labelpad=8)
-        plt.yticks(fontsize=FONT_SIZE, color='black')
+        # Y-axis: max 4 ticks, smart format
+        from matplotlib.ticker import FuncFormatter
+        def _y_fmt(x, pos):
+            if x < 0:
+                return ""
+            if x == 0:
+                return "0"
+            if abs(x) >= 1:
+                if abs(x - round(x)) < 1e-9:
+                    return f"{int(round(x))}"
+                return f"{x:.1f}"
+            return f"{x:.2f}".rstrip('0').rstrip('.')
+        ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=4))
+        ax.yaxis.set_major_formatter(FuncFormatter(_y_fmt))
+
+        title_str = f"{feat_label} {unit_label}".strip()
+        ax.set_title(title_str, fontsize=FONT_SIZE + 4, color='black', fontweight='bold', pad=30)
+        ax.tick_params(axis='y', labelsize=FONT_SIZE + 12)
 
         plt.tight_layout()
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
             fname = os.path.join(save_dir, f"grouped_{feat_label.replace(' ', '_').lower()}_{level_name.replace(' ', '_').lower()}.pdf")
-            plt.savefig(fname, bbox_inches='tight', transparent=True)
+            plt.savefig(fname, bbox_inches='tight', transparent=True, dpi=300)
         plt.show()
 
     if feature == "firing":
