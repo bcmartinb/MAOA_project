@@ -540,7 +540,7 @@ def run_comprehensive_stats(df, feature, level="well", unit="months"):
     return {"anova": anova_res, "table": pd.DataFrame(timepoint_results)}
 
 
-def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, order=PLOT_ORDER, unit="months", threshold_spikes_per_min=5, save_dir=None):
+def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, order=PLOT_ORDER, unit="months", threshold_spikes_per_min=5, save_dir=None, show_legend=False):
     df = df.copy()
     threshold_hz = threshold_spikes_per_min / 60.0
     
@@ -581,7 +581,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             traj_summary, posthoc_text = "Trajectory: N/A", ""
 
         # ── helper: draw strips + boxes + regression on a given axis ──────────
-        def _plot_on(ax):
+        def _plot_on(ax, add_legend=False):
             ax.yaxis.grid(False)
             ax.xaxis.grid(False)
             ax.set_axisbelow(True)
@@ -610,6 +610,15 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
                                 ax=ax)
             if ax.get_legend():
                 ax.get_legend().remove()
+            if add_legend:
+                from matplotlib.patches import Patch
+                handles = [
+                    Patch(facecolor=palette[g], edgecolor='black', linewidth=0.8, label=g)
+                    for g in order if g in palette
+                ]
+                ax.legend(handles=handles, prop={'size': 20, 'weight': 'bold'},
+                          frameon=True, facecolor='white', edgecolor='gray',
+                          loc='upper left', borderpad=0.6, labelspacing=0.4)
 
         if split_axis:
             # zoom_max: include every whisker top but clip outlier dots
@@ -634,7 +643,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
 
             # Main axes — left 55 % of figure
             ax = fig.add_axes([0.09, 0.14, 0.52, 0.80])
-            _plot_on(ax)
+            _plot_on(ax, add_legend=show_legend)
             ax.set_ylim(0, zoom_max)
             ax.spines['bottom'].set_color('black')
             ax.spines['left'].set_color('black')
@@ -698,7 +707,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
                     }
                 )
                 _plot_on(ax_top)
-                _plot_on(ax_bot)
+                _plot_on(ax_bot, add_legend=show_legend)
                 # Force font sizes after seaborn rendering (seaborn may override rcParams)
                 for _ax in (ax_top, ax_bot):
                     _ax.tick_params(axis='y', labelsize=38)
@@ -751,7 +760,7 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
         else:
             fig, ax = plt.subplots(figsize=(14, 8))
             sns.set_style("white")
-            _plot_on(ax)
+            _plot_on(ax, add_legend=show_legend)
             ax.spines['bottom'].set_color('black')
             ax.spines['left'].set_color('black')
             ax.spines['top'].set_visible(False)
@@ -869,7 +878,7 @@ def format_table_with_stars(df):
     return df_stars
 
 
-def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes_per_min=5, save_dir=None):
+def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes_per_min=5, save_dir=None, show_group_labels=False):
     df = df.copy()
     threshold_hz = threshold_spikes_per_min / 60.0
     FONT_SIZE = 24
@@ -914,7 +923,12 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
                        edgecolors='none', zorder=5)
 
         ax.set_xticks(x_positions)
-        ax.set_xticklabels([''] * len(order))       # no x-axis labels
+        if show_group_labels:
+            ax.set_xticklabels(order, fontsize=FONT_SIZE, fontweight='bold', rotation=45, ha='right')
+            for tick, g in zip(ax.get_xticklabels(), order):
+                tick.set_color(palette.get(g, 'black'))
+        else:
+            ax.set_xticklabels([''] * len(order))
         ax.spines['bottom'].set_color('black')
         ax.spines['left'].set_color('black')
         ax.spines['top'].set_visible(False)
@@ -1057,6 +1071,72 @@ def run_grouped_analysis(df, experiment, save_dir=None):
     for feat in ["firing", "burst", "network", "synchrony"]:
         print(f"\n--- GENERATING GROUPED PLOTS FOR {feat.upper()} ---")
         plot_grouped_genotype_analysis(df_exp, feat, MAOA_FIGURE_PALETTE, PLOT_ORDER, save_dir=save_dir)
+
+# --------------------------------------------------------------
+# SUPPLEMENTARY FIGURES — by clone
+# --------------------------------------------------------------
+
+CLONE_PALETTE = {
+    "C30":  "#8c778c",   # WT clone  — matches Xa:WT/Xi:MUT group color
+    "C71":  "#e7b3e8",   # MUT clone 1 — matches Xa:MUT/Xi:WT group color (light)
+    "C3":   "#cc78cc",   # MUT clone 2 — darker shade of same pink family
+    "GM":   "#e66ab6",   # KO clone  — matches MAOA/B^{-/Y} group color
+}
+
+CLONE_ORDER = ["C30", "C71", "C3", "GM"]
+
+
+def run_mea_analysis_by_clone(df, experiment, unit="months", save_dir=None):
+    """Trajectory plots (same as run_mea_analysis_for_figure) grouped by clone."""
+    df_exp = df[df["experiment"] == experiment].copy()
+    df_exp = df_exp[df_exp["cell_line"].isin(CLONE_PALETTE)].copy()
+    df_exp["group"] = df_exp["cell_line"]
+
+    ref_date = pd.to_datetime("2025-08-12")
+    df_exp["recording_date"] = pd.to_datetime(df_exp["recording_date"])
+    df_exp["age_days"] = (df_exp["recording_date"] - ref_date).dt.days + 180
+    df_exp["time_val"] = (df_exp["age_days"] / 30.44).round(1) if unit == "months" else df_exp["age_days"]
+
+    for feat in ["firing", "burst", "network", "synchrony"]:
+        print(f"\n{'='*40}\nFEATURE: {feat.upper()}\n{'='*40}")
+        plot_figure_boxplots_for_paper(
+            df_exp, feat,
+            palette=CLONE_PALETTE,
+            order=CLONE_ORDER,
+            unit=unit,
+            save_dir=save_dir,
+            show_legend=True,
+        )
+
+        print("\n--- WELL-LEVEL STATS ---")
+        well_stats = run_comprehensive_stats(df_exp, feat, level="well", unit=unit)
+        print("ANOVA Interaction:\n", well_stats["anova"])
+        print("\nTime-Point Table (Significance Stars):")
+        print(format_table_with_stars(well_stats["table"]).to_string(index=False))
+
+        if feat in ["firing", "burst"]:
+            print(f"\n--- ELECTRODE-LEVEL {feat.upper()} STATS ---")
+            elec_stats = run_comprehensive_stats(df_exp, feat, level="electrode", unit=unit)
+            print("\nTime-Point Table (Significance Stars):")
+            print(format_table_with_stars(elec_stats["table"]).to_string(index=False))
+
+
+def run_grouped_analysis_by_clone(df, experiment, save_dir=None):
+    """Bar plots (same as run_grouped_analysis) grouped by clone."""
+    df_exp = df[df["experiment"] == experiment].copy()
+    df_exp = df_exp[df_exp["cell_line"].isin(CLONE_PALETTE)].copy()
+    df_exp["group"] = df_exp["cell_line"]
+
+    for feat in ["firing", "burst", "network", "synchrony"]:
+        print(f"\n--- GENERATING CLONE PLOTS FOR {feat.upper()} ---")
+        plot_grouped_genotype_analysis(
+            df_exp, feat,
+            palette=CLONE_PALETTE,
+            order=CLONE_ORDER,
+            save_dir=save_dir,
+            show_group_labels=True,
+        )
+
 
 def find_best_single_window(well_spikes, goal="sync", duration=60):
     if well_spikes.empty: return 0
