@@ -10,3 +10,5 @@ Code for processing and analyzing MEA recordings, including spike detection, net
 
 Developed in collaboration with Sandra Sanchez.
 
+*Co-author — manuscript in preparation.*
+
