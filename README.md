@@ -1,4 +1,20 @@
-# MAOA organoid MEA analysis
+# MAOA Project
+
+Multi-electrode array (MEA) analysis pipeline developed in collaboration with Sandra Sanchez.
+
+## Overview
+
+Code for processing and analyzing MEA recordings, including spike detection, network activity quantification, and visualization.
+
+## Collaboration
+
+Developed in collaboration with Sandra Sanchez.
+
+*Co-author — manuscript in preparation.*
+
+---
+
+## Organoid MEA analysis (Exp1, Exp3)
 
 Spiking, bursting, network and synchrony analysis of MAOA cortical organoids recorded on Axion MEA plates.
 This README is the running record of **how the data were processed and analysed**, written so it can be
