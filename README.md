@@ -4,7 +4,7 @@ Multi-electrode array (MEA) analysis pipeline developed in collaboration with Sa
 
 ## Overview
 
-Code for processing and analyzing MEA recordings, including spike detection, network activity quantification, and visualization.
+Code for analyzing MEA recordings from the spike lists exported by the Axion software (spike detection is done in Axion): firing, burst, network and synchrony quantification, statistics, and visualization.
 
 ## Collaboration
 
