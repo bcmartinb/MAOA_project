@@ -503,41 +503,9 @@ def calculate_cohens_d(group1, group2):
     return (np.mean(group1) - np.mean(group2)) / pooled_std if pooled_std != 0 else 0
 
 def run_comprehensive_stats(df, feature, level="well", unit="months"):
-    df = df.copy()
-    
-    if level == "electrode":
-        key = "firing_rate_vector_hz" if feature == "firing" else "burst_rate_vector_hz"
-        expanded = []
-        for _, row in df.iterrows():
-            for v in row[key]:
-                expanded.append({"group": row["group"], "time_val": row["time_val"], "val": v})
-        df_stats = pd.DataFrame(expanded).dropna()
-        if feature == "firing": df_stats = df_stats[df_stats["val"] >= (5/60)]
-    else:
-        if feature == "firing": df_stats = df.assign(val=df["firing_rate_stats_hz"].str[0])
-        elif feature == "burst": df_stats = df.assign(val=df["burst_rate_stats_hz"].str[0])
-        elif feature == "network": df_stats = df.assign(val=df["network_event_rate_hz"])
-        elif feature == "synchrony": df_stats = df.assign(val=df["synchrony_index"])
-        df_stats = df_stats.dropna(subset=["val"])
-
-    model = smf.ols("val ~ C(group) * C(time_val)", data=df_stats).fit()
-    anova_res = anova_lm(model, typ=2)
-    
-    timepoint_results = []
-    for time in sorted(df_stats["time_val"].unique()):
-        sub = df_stats[df_stats["time_val"] == time]
-        if len(sub["group"].unique()) > 1:
-            m_pt = smf.ols("val ~ C(group)", data=sub).fit()
-            p_anova = anova_lm(m_pt, typ=2).loc["C(group)", "PR(>F)"]
-            res = {"Time": time, "ANOVA_p": p_anova}
-            if p_anova < 0.05:
-                ph = mc.MultiComparison(sub["val"], sub["group"]).tukeyhsd()
-                ph_df = pd.DataFrame(data=ph.summary().data[1:], columns=ph.summary().data[0])
-                for _, row in ph_df.iterrows():
-                    res[f"{row['group1']} vs {row['group2']}"] = row['p-adj']
-            timepoint_results.append(res)
-            
-    return {"anova": anova_res, "table": pd.DataFrame(timepoint_results)}
+    """Mixed-model stats (see run_mixed_model_stats), returned in the old {anova, table} format."""
+    res = run_mixed_model_stats(df, feature, level=level)
+    return {"anova": res["lrt"], "table": res["per_time"], "overall": res["overall"]}
 
 
 def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, order=PLOT_ORDER, unit="months", threshold_spikes_per_min=5, save_dir=None, show_legend=False):
@@ -562,23 +530,23 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
 
     xlabel = f"Age ({unit.capitalize()})"
 
-    def draw_trajectory_panel(data, y_col, level_name, split_axis=False, zoom_max_override=None, broken_axis=False):
+    def draw_trajectory_panel(data, y_col, level_name, split_axis=False, zoom_max_override=None, broken_axis=False, stats=None):
         data = data.dropna(subset=[y_col]).sort_values("age_days")
         if data.empty: return
 
+        # Stats come from run_mixed_model_stats:
+        #   "Trajectory" = group x age interaction (do groups change differently with age?)
+        #   pairwise matrix = overall group differences across all ages
         ph_df = pd.DataFrame()
-        try:
-            model = smf.ols(f"{y_col} ~ C(group) * C(time_val)", data=data).fit()
-            p_int = anova_lm(model, typ=2).loc["C(group):C(time_val)", "PR(>F)"]
-            traj_summary = f"Trajectory: {get_stars(p_int)}"
-            posthoc_text = ""
-            if p_int < 0.05:
-                ph = mc.MultiComparison(data[y_col], data["group"]).tukeyhsd()
-                ph_df = pd.DataFrame(data=ph.summary().data[1:], columns=ph.summary().data[0])
-                sigs = [f"{r['group1']} v {r['group2']}: {get_stars(r['p-adj'])}" for _, r in ph_df.iterrows() if r['p-adj'] < 0.05]
-                posthoc_text = "\n".join(sigs)
-        except:
+        if stats is None:
             traj_summary, posthoc_text = "Trajectory: N/A", ""
+        else:
+            traj_summary = f"Trajectory: {get_stars(stats['p_interaction'])}"
+            sigs = [f"{r['group1']} v {r['group2']}: {get_stars(r['p-adj'])}"
+                    for _, r in stats["overall"].iterrows() if r["p-adj"] < 0.05]
+            posthoc_text = "\n".join(sigs)
+            if stats["p_group"] < 0.05:
+                ph_df = stats["overall"]
 
         # ── helper: draw strips + boxes + regression on a given axis ──────────
         def _plot_on(ax, add_legend=False):
@@ -597,17 +565,18 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
                         capprops=dict(color='black', linewidth=1),
                         whiskerprops=dict(color='black', linewidth=1),
                         zorder=3, ax=ax)
+            # Linear trend fit against actual age (time_val), drawn at each box position,
+            # so uneven gaps between recordings are respected
             time_points = sorted(data["time_val"].unique())
-            x_map = {val: i for i, val in enumerate(time_points)}
-            d2 = data.copy()
-            d2['x_idx'] = d2['time_val'].map(x_map)
+            x_pos = np.arange(len(time_points))
             for g in order:
-                sub = d2[d2["group"] == g]
-                if len(sub) > 2:
-                    sns.regplot(data=sub, x="x_idx", y=y_col, scatter=False,
-                                color=palette[g], truncate=True,
-                                line_kws={"ls": "--", "lw": 2.5, "zorder": 4},
-                                ax=ax)
+                sub = data[data["group"] == g]
+                if len(sub) > 2 and sub["time_val"].nunique() > 1:
+                    fit = smf.ols(f"{y_col} ~ time_val", data=sub).fit()
+                    pred = fit.get_prediction(pd.DataFrame({"time_val": time_points})).summary_frame(alpha=0.05)
+                    ax.plot(x_pos, pred["mean"], color=palette[g], ls="--", lw=2.5, zorder=4)
+                    ax.fill_between(x_pos, pred["mean_ci_lower"], pred["mean_ci_upper"],
+                                    color=palette[g], alpha=0.15, lw=0, zorder=1)
             if ax.get_legend():
                 ax.get_legend().remove()
             if add_legend:
@@ -847,7 +816,9 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
                 plt.savefig(fname_s, bbox_inches='tight', transparent=True, dpi=300)
             plt.show()
 
-    draw_trajectory_panel(df, "plot_val", "Well-Level")
+    stats_out = {"Well-Level": run_mixed_model_stats(df, feature, level="well",
+                                                      threshold_spikes_per_min=threshold_spikes_per_min)}
+    draw_trajectory_panel(df, "plot_val", "Well-Level", stats=stats_out["Well-Level"])
 
     if elec_key and elec_key in df.columns:
         expanded = []
@@ -861,7 +832,12 @@ def plot_figure_boxplots_for_paper(df, feature, palette=MAOA_FIGURE_PALETTE, ord
             if feature == "firing": elec_df = elec_df[elec_df["v"] >= threshold_hz]
             zoom_overrides = {"firing": 11, "burst": 0.25}
             zoom_override = zoom_overrides.get(feature, None)
-            draw_trajectory_panel(elec_df, "v", "Electrode-Level", broken_axis=True, zoom_max_override=zoom_override)
+            stats_out["Electrode-Level"] = run_mixed_model_stats(df, feature, level="electrode",
+                                                                 threshold_spikes_per_min=threshold_spikes_per_min)
+            draw_trajectory_panel(elec_df, "v", "Electrode-Level", broken_axis=True,
+                                  zoom_max_override=zoom_override, stats=stats_out["Electrode-Level"])
+
+    return stats_out
 
 
 def format_table_with_stars(df):
@@ -883,17 +859,17 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
     threshold_hz = threshold_spikes_per_min / 60.0
     FONT_SIZE = 24
 
+    # Overall group differences from the mixed model (all ages pooled, well as random effect)
+    levels = ["well", "electrode"] if feature in ("firing", "burst") else ["well"]
+    mm_stats = {f"{l.capitalize()}-Level": run_mixed_model_stats(df, feature, level=l,
+                                                                 threshold_spikes_per_min=threshold_spikes_per_min)
+                for l in levels}
+
     def draw_grouped_panel(data, y_col, level_name, feat_label):
         data = data.dropna(subset=[y_col])
         if data.empty: return
-        
-        try:
-            comp = mc.MultiComparison(data[y_col], data["group"])
-            ph_df = pd.DataFrame(data=comp.tukeyhsd().summary().data[1:], 
-                                 columns=comp.tukeyhsd().summary().data[0])
-        except Exception as e:
-            print(f"Stats error in {level_name} {feat_label}: {e}")
-            ph_df = pd.DataFrame()
+
+        ph_df = mm_stats[level_name]["overall"]
 
         fig, ax = plt.subplots(figsize=(6, 7))
         sns.set_style("white")
@@ -1021,8 +997,13 @@ def plot_grouped_genotype_analysis(df, feature, palette, order, threshold_spikes
         df["well_val"] = df["synchrony_index"]
         draw_grouped_panel(df, "well_val", "Well-Level", "Synchrony Index")
 
+    for level_name, st in mm_stats.items():
+        print_mixed_stats(st, f"{level_name} {feature} (bar plot)")
+    return mm_stats
 
-def run_mea_analysis_for_figure(df, experiment, unit="days", palette=MAOA_FIGURE_PALETTE, threshold_spikes_per_min=5, save_dir=None):
+
+def run_mea_analysis_for_figure(df, experiment, unit="days", palette=MAOA_FIGURE_PALETTE, threshold_spikes_per_min=5, save_dir=None,
+                                features=("firing", "burst", "network", "synchrony")):
     df_exp = df[df["experiment"] == experiment].copy()
 
     def assign_genotype(line):
@@ -1033,30 +1014,19 @@ def run_mea_analysis_for_figure(df, experiment, unit="days", palette=MAOA_FIGURE
 
     df_exp["group"] = df_exp["cell_line"].apply(assign_genotype)
 
-    ref_date = pd.to_datetime("2025-08-12")
-    df_exp["recording_date"] = pd.to_datetime(df_exp["recording_date"])
-    df_exp["age_days"] = (df_exp["recording_date"] - ref_date).dt.days + 180
+    # organoid_age_days comes from each plate's origin_date (works for any experiment)
+    df_exp["age_days"] = df_exp["organoid_age_days"]
     df_exp["time_val"] = (df_exp["age_days"] / 30.44).round(1) if unit == "months" else df_exp["age_days"]
 
-    for feat in ["firing", "burst", "network", "synchrony"]:
+    all_stats = {}
+    for feat in features:
         print(f"\n{'='*40}\nFEATURE: {feat.upper()}\n{'='*40}")
-        plot_figure_boxplots_for_paper(df_exp, feat, palette, PLOT_ORDER, unit, save_dir=save_dir)
-        
-        print("\n--- WELL-LEVEL STATS ---")
-        well_stats = run_comprehensive_stats(df_exp, feat, level="well", unit=unit)
-        print("ANOVA Interaction:\n", well_stats["anova"])
-        
-        print("\nTime-Point Table (Significance Stars):")
-        print(format_table_with_stars(well_stats["table"]).to_string(index=False))
-        
-        if feat in ["firing", "burst"]:
-            print(f"\n--- ELECTRODE-LEVEL {feat.upper()} STATS ---")
-            elec_stats = run_comprehensive_stats(df_exp, feat, level="electrode", unit=unit)
-            
-            print("\nTime-Point Table (Significance Stars):")
-            print(format_table_with_stars(elec_stats["table"]).to_string(index=False))
+        all_stats[feat] = plot_figure_boxplots_for_paper(df_exp, feat, palette, PLOT_ORDER, unit, save_dir=save_dir)
+        for level_name, st in all_stats[feat].items():
+            print_mixed_stats(st, f"{level_name} {feat}")
+    return all_stats
 
-def run_grouped_analysis(df, experiment, save_dir=None):
+def run_grouped_analysis(df, experiment, save_dir=None, features=("firing", "burst", "network", "synchrony")):
     df_exp = df[df["experiment"] == experiment].copy()
 
     def assign_genotype(line):
@@ -1068,7 +1038,7 @@ def run_grouped_analysis(df, experiment, save_dir=None):
     df_exp["group"] = df_exp["cell_line"].apply(assign_genotype)
     df_exp = df_exp[df_exp["group"] != "other"]
 
-    for feat in ["firing", "burst", "network", "synchrony"]:
+    for feat in features:
         print(f"\n--- GENERATING GROUPED PLOTS FOR {feat.upper()} ---")
         plot_grouped_genotype_analysis(df_exp, feat, MAOA_FIGURE_PALETTE, PLOT_ORDER, save_dir=save_dir)
 
@@ -1086,20 +1056,20 @@ CLONE_PALETTE = {
 CLONE_ORDER = ["C30", "C71", "C3", "GM"]
 
 
-def run_mea_analysis_by_clone(df, experiment, unit="months", save_dir=None):
+def run_mea_analysis_by_clone(df, experiment, unit="months", save_dir=None, features=("firing", "burst", "network", "synchrony")):
     """Trajectory plots (same as run_mea_analysis_for_figure) grouped by clone."""
     df_exp = df[df["experiment"] == experiment].copy()
     df_exp = df_exp[df_exp["cell_line"].isin(CLONE_PALETTE)].copy()
     df_exp["group"] = df_exp["cell_line"]
 
-    ref_date = pd.to_datetime("2025-08-12")
-    df_exp["recording_date"] = pd.to_datetime(df_exp["recording_date"])
-    df_exp["age_days"] = (df_exp["recording_date"] - ref_date).dt.days + 180
+    # organoid_age_days comes from each plate's origin_date (works for any experiment)
+    df_exp["age_days"] = df_exp["organoid_age_days"]
     df_exp["time_val"] = (df_exp["age_days"] / 30.44).round(1) if unit == "months" else df_exp["age_days"]
 
-    for feat in ["firing", "burst", "network", "synchrony"]:
+    all_stats = {}
+    for feat in features:
         print(f"\n{'='*40}\nFEATURE: {feat.upper()}\n{'='*40}")
-        plot_figure_boxplots_for_paper(
+        all_stats[feat] = plot_figure_boxplots_for_paper(
             df_exp, feat,
             palette=CLONE_PALETTE,
             order=CLONE_ORDER,
@@ -1107,27 +1077,18 @@ def run_mea_analysis_by_clone(df, experiment, unit="months", save_dir=None):
             save_dir=save_dir,
             show_legend=True,
         )
-
-        print("\n--- WELL-LEVEL STATS ---")
-        well_stats = run_comprehensive_stats(df_exp, feat, level="well", unit=unit)
-        print("ANOVA Interaction:\n", well_stats["anova"])
-        print("\nTime-Point Table (Significance Stars):")
-        print(format_table_with_stars(well_stats["table"]).to_string(index=False))
-
-        if feat in ["firing", "burst"]:
-            print(f"\n--- ELECTRODE-LEVEL {feat.upper()} STATS ---")
-            elec_stats = run_comprehensive_stats(df_exp, feat, level="electrode", unit=unit)
-            print("\nTime-Point Table (Significance Stars):")
-            print(format_table_with_stars(elec_stats["table"]).to_string(index=False))
+        for level_name, st in all_stats[feat].items():
+            print_mixed_stats(st, f"{level_name} {feat}")
+    return all_stats
 
 
-def run_grouped_analysis_by_clone(df, experiment, save_dir=None):
+def run_grouped_analysis_by_clone(df, experiment, save_dir=None, features=("firing", "burst", "network", "synchrony")):
     """Bar plots (same as run_grouped_analysis) grouped by clone."""
     df_exp = df[df["experiment"] == experiment].copy()
     df_exp = df_exp[df_exp["cell_line"].isin(CLONE_PALETTE)].copy()
     df_exp["group"] = df_exp["cell_line"]
 
-    for feat in ["firing", "burst", "network", "synchrony"]:
+    for feat in features:
         print(f"\n--- GENERATING CLONE PLOTS FOR {feat.upper()} ---")
         plot_grouped_genotype_analysis(
             df_exp, feat,
@@ -1263,3 +1224,296 @@ def generate_activity_gallery(big_df, experiment="Exp3", num_options=5, duration
     sns.despine()
     plt.tight_layout()
     plt.show()
+
+# --------------------------------------------------------------
+# GOOD-DATA WINDOW (same rule for every experiment)
+# --------------------------------------------------------------
+
+def get_good_data_dates(df, experiment, min_active_frac=0.40, threshold_spikes_per_min=5):
+    """
+    A recording date is good if >= min_active_frac of wells are active
+    (well mean firing >= threshold_spikes_per_min). The good window runs from
+    the first recording up to the first date that fails.
+    Returns (list of good dates, per-date summary table).
+    """
+    df_exp = df[df["experiment"] == experiment].copy()
+    df_exp["active"] = df_exp["firing_rate_stats_hz"].str[0] >= threshold_spikes_per_min / 60.0
+    summary = (df_exp.groupby("recording_date")
+               .agg(age_months=("organoid_age_days", lambda s: round(s.iloc[0] / 30.44, 1)),
+                    n_wells=("active", "size"),
+                    active_frac=("active", "mean"))
+               .sort_index())
+    summary["good"] = (summary["active_frac"] >= min_active_frac).cummin()
+    return list(summary.index[summary["good"]]), summary
+
+
+
+# --------------------------------------------------------------
+# MIXED-MODEL STATS
+#   The same wells are recorded every week (and electrodes sit inside wells),
+#   so measurements are not independent. Models use a random intercept per
+#   well (+ per electrode for electrode-level data), plate as a fixed effect,
+#   and square-root-transformed rates (right-skewed). Synchrony is untransformed.
+# --------------------------------------------------------------
+from scipy.stats import chi2, norm
+from statsmodels.stats.multitest import multipletests
+
+
+def get_long_values(df, feature, level="well", threshold_spikes_per_min=5):
+    """One row per measurement: group, time_val, plate_name, well_id, (electrode), val."""
+    base = df.copy()
+    base["well_id"] = base["plate_name"].astype(str) + "_" + base["well"].astype(str)
+    if "time_val" not in base.columns:
+        base["time_val"] = (base["organoid_age_days"] / 30.44).round(1)
+    cols = ["group", "time_val", "plate_name", "well_id"]
+
+    if level == "electrode":
+        key = "firing_rate_vector_hz" if feature == "firing" else "burst_rate_vector_hz"
+        rows = [(*r[cols], e, v) for _, r in base.iterrows()
+                for e, v in zip(r["electrodes"], r[key])]
+        out = pd.DataFrame(rows, columns=cols + ["electrode", "val"]).dropna(subset=["val"])
+        if feature == "firing":
+            out = out[out["val"] >= threshold_spikes_per_min / 60.0]
+    else:
+        src = {"firing": lambda d: d["firing_rate_stats_hz"].str[0],
+               "burst": lambda d: d["burst_rate_stats_hz"].str[0],
+               "network": lambda d: d["network_event_rate_hz"],
+               "synchrony": lambda d: d["synchrony_index"]}[feature]
+        out = base[cols].assign(val=src(base)).dropna(subset=["val"])
+    out = out[out["group"] != "other"].copy()
+    out["val"] = out["val"].astype(float)
+    return out.reset_index(drop=True)
+
+
+def _fit_model(formula, data, electrode_re):
+    # one observation per well (single recording day, well-level) -> no repeated measures
+    if data.groupby("well_id").size().max() == 1:
+        return smf.ols(formula, data=data).fit()
+    # re_formula="1" keeps the per-well intercept when electrode components are added
+    kw = {"re_formula": "1", "vc_formula": {"electrode": "0 + C(electrode)"}} if electrode_re else {}
+    model = smf.mixedlm(formula, data=data, groups="well_id", **kw)
+    # optimizers can stall at a poor optimum -> keep the best likelihood
+    best = None
+    for method in ("lbfgs", "bfgs", "powell"):
+        try:
+            res = model.fit(reml=False, method=method)
+        except Exception:
+            continue
+        if np.isfinite(res.llf) and (best is None or res.llf > best.llf):
+            best = res
+    if best is None:
+        raise RuntimeError(f"Mixed model failed to fit: {formula}")
+    return best
+
+
+def _fixed(res):
+    return res.fe_params if hasattr(res, "fe_params") else res.params
+
+
+def _lrt_p(full, reduced):
+    stat = max(2 * (full.llf - reduced.llf), 0.0)
+    dof = len(_fixed(full)) - len(_fixed(reduced))
+    return chi2.sf(stat, dof) if dof > 0 else np.nan
+
+
+def _holm(p):
+    p = pd.Series(p, dtype=float)
+    out = pd.Series(np.nan, index=p.index)
+    ok = p.notna()
+    if ok.any():
+        out[ok] = multipletests(p[ok], method="holm")[1]
+    return out.values
+
+
+def _pairwise_contrasts(res, groups, time=None):
+    """Pairwise group differences (model units: sqrt for rates) from the fixed effects; at one age if `time` is given."""
+    fe = _fixed(res)
+    cov = res.cov_params().loc[fe.index, fe.index]
+
+    def coef_vec(g):
+        v = pd.Series(0.0, index=fe.index)
+        keys = [f"C(group)[T.{g}]"]
+        if time is not None:
+            keys.append(f"C(group)[T.{g}]:C(time_val)[T.{time}]")
+        for k in keys:
+            if k in v.index:
+                v[k] = 1.0
+        return v
+
+    rows = []
+    for i, g1 in enumerate(groups):
+        for g2 in groups[i + 1:]:
+            L = coef_vec(g2) - coef_vec(g1)
+            diff = float(L @ fe)
+            se = float(np.sqrt(L @ cov @ L))
+            rows.append({"group1": g1, "group2": g2, "diff": diff,
+                         "p": 2 * norm.sf(abs(diff / se)) if se > 0 else np.nan})
+    return pd.DataFrame(rows)
+
+
+def run_mixed_model_stats(df, feature, level="well", threshold_spikes_per_min=5):
+    """
+    Returns:
+      lrt       likelihood-ratio tests for group, age, and group x age (trajectory)
+      overall   pairwise group differences across all ages (Holm-adjusted)
+      per_time  pairwise group differences at each age (Holm-adjusted across all ages and pairs)
+    """
+    data = get_long_values(df, feature, level, threshold_spikes_per_min)
+    # rates (>= 0, right-skewed) are square-root transformed (gave the most symmetric residuals
+    # across Exp1 and Exp3; log over-corrects when wells go silent). Synchrony can dip below 0 -> untransformed.
+    data["y"] = data["val"] if feature == "synchrony" else np.sqrt(data["val"])
+    groups = sorted(data["group"].unique())
+    times = sorted(data["time_val"].unique())
+    multi_time = len(times) > 1
+    plate_term = " + C(plate_name)" if data["plate_name"].nunique() > 1 else ""
+    time_term = " + C(time_val)" if multi_time else ""
+    electrode_re = level == "electrode" and data.groupby(["well_id", "electrode"]).size().max() > 1
+
+    main = _fit_model(f"y ~ C(group){time_term}{plate_term}", data, electrode_re)
+    null = _fit_model(f"y ~ 1{time_term}{plate_term}", data, electrode_re)
+    lrt = {"group": _lrt_p(main, null)}
+
+    per_time = pd.DataFrame()
+    if multi_time:
+        full = _fit_model(f"y ~ C(group) * C(time_val){plate_term}", data, electrode_re)
+        no_time = _fit_model(f"y ~ C(group){plate_term}", data, electrode_re)
+        lrt["age"] = _lrt_p(main, no_time)
+        lrt["group x age"] = _lrt_p(full, main)
+        pt = pd.concat([_pairwise_contrasts(full, groups, t).assign(Time=t) for t in times],
+                       ignore_index=True)
+        pt["p-adj"] = _holm(pt["p"])
+        pt["pair"] = pt["group1"] + " vs " + pt["group2"]
+        per_time = pt.pivot(index="Time", columns="pair", values="p-adj").reset_index()
+        per_time.columns.name = None
+
+    overall = _pairwise_contrasts(main, groups)
+    overall["p-adj"] = _holm(overall["p"])
+
+    if hasattr(main, "fe_params"):
+        model_desc = "mixed model, random intercept per well" + (" + per electrode" if electrode_re else "")
+    else:
+        model_desc = "OLS, one observation per well"
+    return {"data": data, "lrt": pd.DataFrame({"term": list(lrt), "p": list(lrt.values())}),
+            "overall": overall, "per_time": per_time,
+            "p_group": lrt["group"], "p_interaction": lrt.get("group x age", np.nan),
+            "model": model_desc, "n": len(data), "n_wells": data["well_id"].nunique()}
+
+
+def print_mixed_stats(stats, title):
+    print(f"\n--- {title.upper()}: {stats['model']} (n={stats['n']}, wells={stats['n_wells']}) ---")
+    lrt = stats["lrt"].copy()
+    lrt["sig"] = lrt["p"].apply(get_stars)
+    print(lrt.to_string(index=False, float_format=lambda x: f"{x:.3g}"))
+    ov = stats["overall"][["group1", "group2", "diff", "p-adj"]].copy()
+    ov["sig"] = ov["p-adj"].apply(get_stars)
+    print("Overall group differences (Holm):")
+    print(ov.to_string(index=False, float_format=lambda x: f"{x:.3g}"))
+    if not stats["per_time"].empty:
+        print("Per-age group differences (Holm across all ages x pairs):")
+        print(format_table_with_stars(stats["per_time"]).to_string(index=False))
+
+
+# --------------------------------------------------------------
+# EXPERIMENT DATASETS + SIDE-BY-SIDE DISPLAY
+#   used by spk_burs_net_analysis_figure_both.ipynb
+# --------------------------------------------------------------
+import contextlib
+from IPython.display import display, HTML
+
+GENOTYPE_GROUPS = {"C30": "Xa:WT/Xi:MUT", "C71": "Xa:MUT/Xi:WT", "C3": "Xa:MUT/Xi:WT", "GM": "MAOA/B$^{-/Y}$"}
+GENOTYPE_SHORT = {"Xa:WT/Xi:MUT": "WT/MUT", "Xa:MUT/Xi:WT": "MUT/WT", "MAOA/B$^{-/Y}$": "KO"}
+EXP_COLORS = {"Exp1": "#E07A1F",   # orange
+              "Exp3": "#1F5FA8"}   # blue
+
+
+def get_experiment_datasets(df, experiments=("Exp1", "Exp3"), min_active_frac=0.40):
+    """
+    Good-data window of each experiment (see get_good_data_dates).
+    Returns ({experiment: window_df}, {experiment: per-day quality table}).
+    """
+    datasets, quality = {}, {}
+    for exp in experiments:
+        dates, quality[exp] = get_good_data_dates(df, exp, min_active_frac)
+        datasets[exp] = df[(df["experiment"] == exp) & df["recording_date"].isin(dates)].copy()
+    return datasets, quality
+
+
+def experiment_age_range(d):
+    ages = (d["organoid_age_days"] / 30.44).round(1)
+    return ages.min(), ages.max()
+
+
+def experiment_banner(exp, d):
+    """Coloured bar marking the start of one experiment's results."""
+    lo, hi = experiment_age_range(d)
+    text = f"{exp.upper()}  ·  {lo}–{hi} months  ·  {d['plate_name'].nunique()} plates"
+    display(HTML(
+        f'<div style="background:{EXP_COLORS.get(exp, "#555555")};color:white;padding:10px 16px;'
+        f'margin:28px 0 6px;border-radius:6px;font-size:22px;font-weight:bold;font-family:sans-serif">{text}</div>'))
+
+
+@contextlib.contextmanager
+def label_figures(text, color):
+    """Add a coloured tag to the top-left corner of every figure shown inside this block (display only)."""
+    original_show = plt.show
+
+    def show_with_label(*args, **kwargs):
+        fig = plt.gcf()
+        fig.text(0, 1.01, text, transform=fig.transFigure, ha="left", va="bottom",
+                 fontsize=22, fontweight="bold", color="white",
+                 bbox=dict(facecolor=color, edgecolor="none", boxstyle="round,pad=0.4"))
+        original_show(*args, **kwargs)
+
+    plt.show = show_with_label
+    try:
+        yield
+    finally:
+        plt.show = original_show
+
+
+def show_feature_by_experiment(datasets, feature, kind, palette=MAOA_FIGURE_PALETTE):
+    """
+    Draw one feature for each experiment in turn, each block with its banner and figure tags.
+    kind: "trajectory" | "bars" | "clone_trajectory" | "clone_bars"
+    """
+    for exp, d in datasets.items():
+        experiment_banner(exp, d)
+        lo, hi = experiment_age_range(d)
+        with label_figures(f"{exp.upper()} · {lo}–{hi} mo", EXP_COLORS.get(exp, "#555555")):
+            if kind == "trajectory":
+                run_mea_analysis_for_figure(d, exp, unit="months", palette=palette, features=[feature])
+            elif kind == "bars":
+                run_grouped_analysis(d, exp, features=[feature])
+            elif kind == "clone_trajectory":
+                run_mea_analysis_by_clone(d, exp, unit="months", features=[feature])
+            elif kind == "clone_bars":
+                run_grouped_analysis_by_clone(d, exp, features=[feature])
+            else:
+                raise ValueError(f"unknown kind: {kind}")
+
+
+def wells_per_group_table(datasets):
+    """Recording days, age range and number of wells per genotype group for each experiment."""
+    rows = []
+    for exp, d in datasets.items():
+        wells = d.drop_duplicates(["plate_name", "well"])
+        counts = wells["cell_line"].map(GENOTYPE_GROUPS).value_counts()
+        lo, hi = experiment_age_range(d)
+        rows.append({"experiment": exp, "recording days": d["recording_date"].nunique(),
+                     "ages (months)": f"{lo}–{hi}", **counts.to_dict(), "total wells": len(wells)})
+    return pd.DataFrame(rows).set_index("experiment")
+
+
+def stats_summary_table(datasets, features=("firing", "burst", "network", "synchrony"), level="well"):
+    """Group x age test and overall pairwise group differences (mixed model) for every feature and experiment."""
+    rows = []
+    for feature in features:
+        for exp, d in datasets.items():
+            grouped = d.assign(group=d["cell_line"].map(GENOTYPE_GROUPS).fillna("other"))
+            st = run_mixed_model_stats(grouped, feature, level=level)
+            row = {"feature": feature, "experiment": exp, "trajectory": get_stars(st["p_interaction"])}
+            for _, r in st["overall"].iterrows():
+                pair = f"{GENOTYPE_SHORT[r['group1']]} vs {GENOTYPE_SHORT[r['group2']]}"
+                row[pair] = f"{get_stars(r['p-adj'])} (p={r['p-adj']:.2g})"
+            rows.append(row)
+    return pd.DataFrame(rows).set_index(["feature", "experiment"])

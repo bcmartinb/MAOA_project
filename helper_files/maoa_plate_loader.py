@@ -783,3 +783,89 @@ def assign_experiment(plate, rec_date):
     return "Unknown"
 
 #### 
+
+
+# =====================================================================
+# RECORDING CORRECTIONS (mislabeled / duplicate spike files)
+# =====================================================================
+# Verified by matching each file's electrode-level firing pattern against
+# the plates' recordings on neighbouring weeks (same plate r ~0.6-0.9,
+# different plate r ~0.0-0.15).
+#   (recording_date_str, folder plate, filename substring, true plate)
+RECORDING_CORRECTIONS = [
+    ("08.22.2025", "MAOA3", "DATE_08.22.2025(001)", "MAOA2"),                    # plate 2 saved in MAOA3 folder
+    ("09.06.2025", "MAOA3", "PLATE _02_TIME_24_DATE_09.06.2025(001)", "MAOA2"),  # 2nd recording of plate 2
+    ("09.19.2025", "MAOA2", "DATE_09.19.2025(000)", "MAOA3"),                    # plates 2/3 swapped
+    ("09.19.2025", "MAOA3", "DATE_09.19.2025(001)", "MAOA2"),
+]
+# Note: 10.16.2025 MAOA77 file is named "PLATE 76 ... (001)" but its data is plate 77 -> no change.
+
+
+def clean_recordings(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    1) Reassign mislabeled spike files to their true plate (re-deriving cell line
+       and age from that plate's layout).
+    2) Keep one recording per plate / date / well: the first file of the day
+       (lowest "(00N)" suffix), e.g. 10.30.2025 plates 72/76/77 were recorded twice.
+    """
+    df = df.copy()
+    fname = df["spike_list_path"].map(os.path.basename)
+
+    for date_str, folder_plate, substr, true_plate in RECORDING_CORRECTIONS:
+        mask = ((df["recording_date_str"] == date_str) & (df["plate_name"] == folder_plate)
+                & fname.str.contains(substr, regex=False))
+        rec_date = datetime.strptime(date_str, "%m.%d.%Y").date()
+        for idx in df.index[mask]:
+            cell_line, age = get_cell_line_and_age(true_plate, df.at[idx, "well"], rec_date)
+            df.at[idx, "plate_name"] = true_plate
+            df.at[idx, "cell_line"] = cell_line
+            df.at[idx, "organoid_age_days"] = age
+        print(f"{date_str}: {mask.sum()} wells moved {folder_plate} -> {true_plate}")
+
+    suffix = fname.str.extract(r"\((\d+)\)")[0].astype(float).fillna(0)
+    n_before = len(df)
+    df = (df.assign(_suffix=suffix)
+            .sort_values("_suffix")
+            .drop_duplicates(subset=["plate_name", "recording_date_str", "well"], keep="first")
+            .drop(columns="_suffix")
+            .sort_index())
+    print(f"Dropped {n_before - len(df)} duplicate well recordings (kept first recording of the day).")
+    return df
+
+
+# =====================================================================
+# EXCLUSIONS (bad recording days, detached wells) — see README
+# =====================================================================
+BAD_RECORDING_DATES = {
+    "2025-09-26": "bad recording",
+    "2025-05-09": ("noise artefact: every electrode in every well fires ~0.8 Hz (~80x the neighbouring weeks), "
+                   "incl. normally silent KO wells; synchrony ~0"),
+}
+# (plate, well, excluded from this date on, reason)
+EXCLUDED_WELLS = [
+    ("MAOA76", "A4", "2025-09-25",
+     "GM organoid detached at the Sept re-plating; near-silent (0-5/64 active electrodes)"),
+]
+
+
+def apply_exclusions(
+    df: pd.DataFrame,
+    bad_dates: dict = BAD_RECORDING_DATES,
+    excluded_wells: list = EXCLUDED_WELLS,
+) -> pd.DataFrame:
+    """Drop bad recording days and detached wells; prints what was removed and why."""
+    df = df.copy()
+    df["recording_date"] = pd.to_datetime(df["recording_date"], errors="coerce")
+
+    for day, reason in bad_dates.items():
+        mask = df["recording_date"] == pd.to_datetime(day)
+        print(f"{day}: removed {mask.sum()} well recordings ({reason})")
+        df = df[~mask]
+
+    for plate, well, start, reason in excluded_wells:
+        mask = ((df["plate_name"] == plate) & (df["well"] == well)
+                & (df["recording_date"] >= pd.to_datetime(start)))
+        print(f"{plate} {well} from {start}: removed {mask.sum()} well recordings ({reason})")
+        df = df[~mask]
+
+    return df
